@@ -1,0 +1,148 @@
+---
+title: "Script 01: Clean R051A"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(glue)
+library(janitor)
+library(readxl)
+library(writexl)
+
+options(scipen = 12, digits = 12)
+```
+
+Setup
+
+```{r}
+path_data <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Data",
+  .sep = "/"
+)
+
+fy <- "2024"
+
+dir_r051a <- glue("{path_data}/Journal Entries/R051A/raw/{fy}")
+
+path_r209 <-
+  glue("{path_data}/Budget/R209/raw/{fy}/r209_GD0_GA0_{fy}.xlsx")
+
+path_r051a_ga0 <-
+  glue("{dir_r051a}/r051a_expense_71_GA0_{fy}.xlsx")
+
+path_r051a_gd0 <-
+  glue("{dir_r051a}/r051a_expense_71_GD0_{fy}.xlsx")
+```
+
+Read
+
+R071
+
+```{r}
+r071 <- read_excel("data/r071_clean.xlsx")
+
+programs <- read_excel("data/programs.xlsx")
+```
+
+209
+
+```{r}
+r209_raw <-
+  read_excel(path_r209, col_types = "text", range = "A17:AG5216") %>%
+  clean_names()
+
+r209 <- r209_raw
+```
+
+R051A
+
+```{r}
+r051a_ga0 <-
+  read_excel(path_r051a_ga0, col_types = "text", range = "A12:AT66121") %>%
+  clean_names()
+
+r051a_gd0 <-
+  read_excel(path_r051a_gd0, col_types = "text", range = "A12:AT69603") %>%
+  clean_names()
+
+r051a_raw <- bind_rows(r051a_ga0, r051a_gd0)
+
+r051a <- r051a_raw
+```
+
+Rename
+
+```{r}
+r051a_rename <- r051a
+```
+
+Clean and transform
+
+```{r}
+r051a_clean <-
+  r051a_rename %>%
+  filter(agency == "GA0" | (project %in% r209$project)) %>%
+  left_join(programs, by = join_by(program)) %>%
+  mutate(po_number = str_extract(
+    transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
+  )) %>%
+  mutate(
+    is_po = !is.na(po_number), .before = po_number
+  ) %>%
+  mutate(
+    is_service = str_detect(account_parent_1, "^713[12]"), .after = is_po
+  ) %>%
+  mutate(across(net_accounted, \(x) round(as.numeric(x), 2)))
+```
+
+Account categories
+
+```{r}
+r051a_clean %>%
+  count(account_desc, account) %>%
+  write_xlsx("data/account_categories.xlsx")
+```
+
+```{r}
+r051a_po <-
+  r051a_clean %>%
+  filter(is_po, is_service) %>%
+  group_by(po_number) %>%
+  summarize(
+    party_name = str_flatten(
+      sort(unique(party_name))[1:3],
+      collapse = "; ",
+      na.rm = TRUE
+    ),
+    cost_center_desc = str_flatten(
+      sort(unique(cost_center_desc))[1:3],
+      collapse = "; ",
+      na.rm = TRUE
+    ),
+    account_desc = str_flatten(
+      sort(unique(account_desc))[1:3],
+      collapse = "; ",
+      na.rm = TRUE
+    ),
+  ) %>%
+  select(party_name, cost_center_desc, account_desc, po_number) %>%
+  arrange(party_name, cost_center_desc, account_desc, po_number)
+```
+
+Write
+
+```{r}
+r051a_po %>%
+  filter(!(po_number %in% r071$po_number)) %>%
+  write_xlsx("data/po_review_r051a.xlsx")
+
+r071 %>%
+  filter((po_number %in% r051a_po$po_number)) %>%
+  write_xlsx("data/po_review_r071.xlsx")
+
+r051a_clean %>% write_xlsx("data/r051a_clean.xlsx")
+```

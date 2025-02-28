@@ -1,0 +1,96 @@
+---
+title: "Script 00: Clean - 485"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(glue)
+library(readxl)
+library(janitor)
+
+options(scipen = 12, digits = 12)
+```
+
+Setup
+
+```{r}
+path_data <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Data",
+  .sep = "/"
+)
+
+fy <- "2024"
+
+dir_485 <- glue("{path_data}/Personnel/485/raw/{fy}")
+
+total_r023 <- 1359378538.29
+```
+
+Read
+
+Functions
+
+```{r}
+read_485 <- function(file_485, dir_485) {
+  path <- glue(dir_485, file_485, .sep = "/")
+
+  pp_485 <- str_sub(file_485, start = 1, end = 4)
+  date_485 <- str_sub(file_485, start = 6, end = 15)
+  group_485 <- str_remove(str_sub(file_485, start = 17, end = -1), ".xlsx")
+
+  read_excel(path, col_types = "text") %>%
+    mutate(
+      pp_485 = pp_485,
+      date_485 = date_485,
+      group_485 = group_485
+    )
+}
+```
+
+```{r}
+files_485 <- list.files(dir_485)
+
+data_485_raw <-
+  map(
+    files_485,
+    \(file_485) read_485(file_485, dir_485)
+  ) %>%
+  list_rbind() %>% 
+  janitor::clean_names()
+  
+data_485 <- data_485_raw
+```
+
+Transform
+
+General ledger personnel expenses
+
+```{r}
+
+total_r023
+
+```
+
+```{r}
+total_485 <-
+  data_485 %>%
+  pull(amttot) %>%
+  as.numeric() %>%
+  sum()
+
+ratio_r023 <- total_r023 / total_485
+```
+
+```{r}
+data_485_clean <-
+  data_485 %>%
+  mutate(amt_485 = as.numeric(amttot)) %>%
+  mutate(amt_r023 = amt_485 * ratio_r023)
+
+data_485_clean %>%
+  summarize(amt_r023 = sum(amt_r023))
+```

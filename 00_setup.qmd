@@ -1,0 +1,67 @@
+---
+title: "Script 00: Setup"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(glue)
+library(janitor)
+library(readxl)
+library(writexl)
+
+options(scipen = 12, digits = 12)
+```
+
+Setup
+
+```{r}
+path_data <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Data",
+  .sep = "/"
+)
+
+fy <- "2024"
+
+path_r025 <-
+  glue("{path_data}/Budget/R025/raw/{fy}/r025_{fy}.xls")
+```
+
+Read
+
+R025
+
+```{r}
+r025_raw <-
+  read_excel(path_r025, col_types = "text", range = "A19:AJ52841") %>%
+  clean_names()
+
+r025 <- r025_raw
+```
+
+```{r}
+rows_missing <- tribble(
+  ~program_parent_level_2, ~program_parent_level_2_description, ~program,
+  "ED0004", "CENTRAL SERVICES", "400078",
+  "ED0022", "SCHOOL SUPPORT SERVICES", "400234",
+)
+```
+
+
+```{r}
+programs <-
+  r025 %>%
+  distinct(
+    program_parent_level_2, program_parent_level_2_description, program
+  ) %>%
+  mutate(program = if_else(program == "0", "000000", program)) %>%
+  bind_rows(rows_missing) %>%
+  arrange(program_parent_level_2_description, program)
+```
+
+```{r}
+programs %>% write_xlsx("data/programs.xlsx")
+```
