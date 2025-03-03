@@ -1,5 +1,5 @@
 ---
-title: "Script 00: Clean R071"
+title: "Script 00: Purchase Orders"
 format: html
 ---
 
@@ -75,7 +75,7 @@ r071_rename <- r071
 Clean and transform
 
 ```{r}
-r071_clean <-
+pos <-
   r071_rename %>%
   filter(buyer_agency == "GA0" | (project %in% r209$project)) %>%
   group_by(supplier_name, po_number, po_title) %>%
@@ -92,11 +92,11 @@ r071_clean <-
     ),
   ) %>%
   select(
-    supplier_name, cost_center_description,
+    cost_center_description, supplier_name,
     po_title, po_line_item_description, po_number,
   ) %>%
   arrange(
-    supplier_name, cost_center_description,
+    cost_center_description, supplier_name,
     po_title, po_line_item_description, po_number,
   )
 ```
@@ -104,5 +104,5 @@ r071_clean <-
 Write
 
 ```{r}
-r071_clean %>% write_xlsx("data/r071_clean.xlsx")
+pos %>% write_xlsx("data/pos.xlsx")
 ```

@@ -40,11 +40,9 @@ path_r051a_gd0 <-
 
 Read
 
-R071
+Programs
 
 ```{r}
-r071 <- read_excel("data/r071_clean.xlsx")
-
 programs <- read_excel("data/programs.xlsx")
 ```
 
@@ -99,50 +97,34 @@ r051a_clean <-
   mutate(across(net_accounted, \(x) round(as.numeric(x), 2)))
 ```
 
-Account categories
-
-```{r}
-r051a_clean %>%
-  count(account_desc, account) %>%
-  write_xlsx("data/account_categories.xlsx")
-```
-
 ```{r}
 r051a_po <-
   r051a_clean %>%
   filter(is_po, is_service) %>%
-  group_by(po_number) %>%
-  summarize(
-    party_name = str_flatten(
-      sort(unique(party_name))[1:3],
-      collapse = "; ",
-      na.rm = TRUE
-    ),
-    cost_center_desc = str_flatten(
-      sort(unique(cost_center_desc))[1:3],
-      collapse = "; ",
-      na.rm = TRUE
-    ),
-    account_desc = str_flatten(
-      sort(unique(account_desc))[1:3],
-      collapse = "; ",
-      na.rm = TRUE
-    ),
+  select(
+    program_parent_level_2_description, cost_center_desc,
+    party_name, account_desc, po_number
   ) %>%
-  select(party_name, cost_center_desc, account_desc, po_number) %>%
-  arrange(party_name, cost_center_desc, account_desc, po_number)
+  arrange(
+    program_parent_level_2_description, cost_center_desc,
+    party_name, account_desc, po_number
+  )
+```
+
+Account categories
+
+```{r}
+account_categories <-
+  r051a_clean %>%
+  count(account_desc, account)
 ```
 
 Write
 
 ```{r}
-r051a_po %>%
-  filter(!(po_number %in% r071$po_number)) %>%
-  write_xlsx("data/po_review_r051a.xlsx")
-
-r071 %>%
-  filter((po_number %in% r051a_po$po_number)) %>%
-  write_xlsx("data/po_review_r071.xlsx")
-
 r051a_clean %>% write_xlsx("data/r051a_clean.xlsx")
+
+r051a_po %>% write_xlsx("data/r051a_po.xlsx")
+
+account_categories %>% write_xlsx("data/account_categories.xlsx")
 ```

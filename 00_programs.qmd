@@ -1,5 +1,5 @@
 ---
-title: "Script 00: Setup"
+title: "Script 00: Programs"
 format: html
 ---
 
@@ -26,8 +26,7 @@ path_data <- glue(
 
 fy <- "2024"
 
-path_r025 <-
-  glue("{path_data}/Budget/R025/raw/{fy}/r025_{fy}.xls")
+path_r025 <- glue("{path_data}/Budget/R025/raw/{fy}/r025_{fy}.xls")
 ```
 
 Read
@@ -43,13 +42,12 @@ r025 <- r025_raw
 ```
 
 ```{r}
-rows_missing <- tribble(
+programs_missing <- tribble(
   ~program_parent_level_2, ~program_parent_level_2_description, ~program,
   "ED0004", "CENTRAL SERVICES", "400078",
   "ED0022", "SCHOOL SUPPORT SERVICES", "400234",
 )
 ```
-
 
 ```{r}
 programs <-
@@ -58,7 +56,7 @@ programs <-
     program_parent_level_2, program_parent_level_2_description, program
   ) %>%
   mutate(program = if_else(program == "0", "000000", program)) %>%
-  bind_rows(rows_missing) %>%
+  bind_rows(programs_missing) %>%
   arrange(program_parent_level_2_description, program)
 ```
 

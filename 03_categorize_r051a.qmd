@@ -1,0 +1,67 @@
+---
+title: "Script 01: Clean R051A"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(glue)
+library(janitor)
+library(readxl)
+library(writexl)
+
+options(scipen = 12, digits = 12)
+```
+
+Setup
+
+```{r}
+path_data <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Data",
+  .sep = "/"
+)
+
+path_working <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Working Files - Indirect Cost",
+  .sep = "/"
+)
+```
+
+Read
+
+```{r}
+pos <- read_excel("data/pos.xlsx")
+
+account_categories <- 
+  read_excel(glue("{path_working}/Account Categories.xlsx")) %>% 
+  mutate(across(starts_with("is_"), \(x) replace_na(as.logical(x), FALSE))) %>% 
+  select(!account_desc)
+
+transactions <- 
+  read_excel("data/r051a_clean.xlsx", col_types = "text") %>% 
+  mutate(across(net_accounted, \(x) round(as.numeric(x), 2))) %>% 
+  mutate(across(starts_with("is_"), as.logical))
+```
+
+```{r}
+transactions_categorized <- 
+  transactions %>% 
+  left_join(account_categories, by = join_by(account)) %>% 
+  mutate(is_excluded_po_not_service = is_po & !is_service) %>% 
+  mutate(
+    amt_nonbudgetary = if_else(is_nonbudgetary, net_accounted, 0),
+    amt_unallowable = if_else(is_unallowable, net_accounted, 0),
+    amt_excluded = if_else(is_excluded, net_accounted, 0),
+  )
+
+transactions_categorized %>% distinct(journal_name, journal_line_number)
+
+```
+
+
