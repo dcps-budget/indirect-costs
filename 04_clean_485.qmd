@@ -1,13 +1,18 @@
 ---
-title: "Script 00: Clean - 485"
+title: "Clean 485"
 format: html
 ---
+
+Depends on:
+
+* clean_r023
 
 ```{r}
 library(tidyverse)
 library(glue)
-library(readxl)
 library(janitor)
+library(readxl)
+library(writexl)
 
 options(scipen = 12, digits = 12)
 ```
@@ -52,6 +57,10 @@ read_485 <- function(file_485, dir_485) {
 ```
 
 ```{r}
+programs <- read_excel("data/programs.xlsx")
+```
+
+```{r}
 files_485 <- list.files(dir_485)
 
 data_485_raw <-
@@ -59,9 +68,9 @@ data_485_raw <-
     files_485,
     \(file_485) read_485(file_485, dir_485)
   ) %>%
-  list_rbind() %>% 
-  janitor::clean_names()
-  
+  list_rbind() %>%
+  clean_names()
+
 data_485 <- data_485_raw
 ```
 
@@ -70,9 +79,7 @@ Transform
 General ledger personnel expenses
 
 ```{r}
-
 total_r023
-
 ```
 
 ```{r}
@@ -88,9 +95,52 @@ ratio_r023 <- total_r023 / total_485
 ```{r}
 data_485_clean <-
   data_485 %>%
-  mutate(amt_485 = as.numeric(amttot)) %>%
-  mutate(amt_r023 = amt_485 * ratio_r023)
+  select(
+    report_agency:offcycle,
+    sort(starts_with("hr_")),
+    sort(starts_with("amt_")),
+    everything()
+  ) %>% 
+  mutate(across(starts_with("amt_"), as.numeric)) %>% 
+  mutate(amt_nonpersonnel = rowSums(across(c(amt_spc_expense:amt_x3112009, amt_x7131002:amt_x7196007)))) %>% 
+  mutate(
+    amt_pay_base = rowSums(across(starts_with("amt_x7011") | starts_with("amt_x7012"))),
+    amt_pay_additonal = rowSums(across(starts_with("amt_x7013"))),
+    amt_overtime = rowSums(across(starts_with("amt_x7015"))),
+    amt_exception = rowSums(across(starts_with("amt_x7016"))),
+  ) %>% 
+  mutate(
+    amt_salary = amt_pay_base + amt_pay_additonal + amt_overtime + amt_exception,
+    amt_benefits = rowSums(across(starts_with("amt_x7014"))),
+    amt_terminal = amt_x7013007
+  ) %>% 
+  left_join(programs, by = join_by(program)) %>%
+  # mutate(across(prog_descr, str_squish)) %>%
+  # corrections
+  mutate(program = if_else(program == "600181", "400267", program)) %>%
+  mutate(prog_descr = if_else(program == "400267", "STUDENT PLACEMENT - SS", prog_descr)) %>%
+  mutate(cost_center = if_else(cost_center == "60030", "40081", cost_center)) %>%
+  mutate(cost_cntr_descr = if_else(cost_center == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", cost_cntr_descr))
 
-data_485_clean %>%
+data_485_clean
+
+```
+
+Write
+
+```{r}
+costcenter_categories <-
+  data_485_clean %>%
+  group_by(
+    cost_cntr_descr, cost_center,
+    program_parent_level_2_description, program_parent_level_2,
+    prog_descr, program,
+  ) %>%
   summarize(amt_r023 = sum(amt_r023))
+
+costcenter_categories %>% write_xlsx("data/costcenter_categories.xlsx")
+```
+
+```{r}
+data_485_clean %>% write_xlsx("data/485_clean.xlsx")
 ```
