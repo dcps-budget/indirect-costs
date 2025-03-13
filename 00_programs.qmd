@@ -43,7 +43,7 @@ r025 <- r025_raw
 
 ```{r}
 programs_missing <- tribble(
-  ~program_parent_level_2, ~program_parent_level_2_description, ~program,
+  ~program_2, ~program_2_name, ~program,
   "ED0004", "CENTRAL SERVICES", "400078",
   "ED0022", "SCHOOL SUPPORT SERVICES", "400234",
   "ED0022", "SCHOOL SUPPORT SERVICES", "600181",
@@ -54,11 +54,13 @@ programs_missing <- tribble(
 programs <-
   r025 %>%
   distinct(
-    program_parent_level_2, program_parent_level_2_description, program
+    program_2 = program_parent_level_2,
+    program_2_name = program_parent_level_2_description,
+    program
   ) %>%
   mutate(program = if_else(program == "0", "000000", program)) %>%
   bind_rows(programs_missing) %>%
-  arrange(program_parent_level_2_description, program)
+  arrange(program_2_name, program)
 ```
 
 ```{r}

@@ -3,6 +3,11 @@ title: "Clean 485"
 format: html
 ---
 
+TODO:
+
+* Position titles from PFR
+* Head of component
+
 Depends on:
 
 * clean_r023
@@ -25,6 +30,14 @@ path_data <- glue(
   "{Sys.getenv('USERNAME')}",
   "OneDrive - District of Columbia Public Schools",
   "Data",
+  .sep = "/"
+)
+
+path_working <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Working Files - Indirect Cost",
   .sep = "/"
 )
 
@@ -56,8 +69,26 @@ read_485 <- function(file_485, dir_485) {
 }
 ```
 
+Lookup tables
+
 ```{r}
 programs <- read_excel("data/programs.xlsx")
+
+categorization_prev <-
+  read_excel("data/personnel_2023.xlsx", col_types = "text") %>%
+  clean_names() %>%
+  distinct(costcenter, position, categorization_prev = position_type) %>%
+  arrange(costcenter, position, categorization_prev)
+
+categorization_sp <-
+  read_excel(
+    glue(
+      "{path_working}/Categorization by Cost Center, Program 2, Program.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  select(costcenter, program_2, program, categorization_sp)
 ```
 
 ```{r}
@@ -74,73 +105,101 @@ data_485_raw <-
 data_485 <- data_485_raw
 ```
 
+Rename
+
+```{r}
+data_485_rename <-
+  data_485 %>%
+  rename(
+    costcenter = cost_center,
+    costcenter_name = cost_cntr_descr,
+    program_name = prog_descr
+  )
+```
+
 Transform
 
 General ledger personnel expenses
 
 ```{r}
-total_r023
-```
-
-```{r}
-total_485 <-
-  data_485 %>%
-  pull(amttot) %>%
-  as.numeric() %>%
-  sum()
-
-ratio_r023 <- total_r023 / total_485
+# total_485 <-
+#   data_485 %>%
+#   pull(amttot) %>%
+#   as.numeric() %>%
+#   sum()
+#
+# ratio_r023 <- total_r023 / total_485
 ```
 
 ```{r}
 data_485_clean <-
-  data_485 %>%
+  data_485_rename %>%
   select(
     report_agency:offcycle,
     sort(starts_with("hr_")),
     sort(starts_with("amt_")),
     everything()
-  ) %>% 
-  mutate(across(starts_with("amt_"), as.numeric)) %>% 
-  mutate(amt_nonpersonnel = rowSums(across(c(amt_spc_expense:amt_x3112009, amt_x7131002:amt_x7196007)))) %>% 
+  ) %>%
+  mutate(across(c(starts_with("amt_"), amttot), \(x) (as.numeric(x)))) %>%
+  mutate(amt_nonpersonnel = rowSums(across(c(amt_spc_expense:amt_x3112009, amt_x7131002:amt_x7196007)))) %>%
   mutate(
     amt_pay_base = rowSums(across(starts_with("amt_x7011") | starts_with("amt_x7012"))),
     amt_pay_additonal = rowSums(across(starts_with("amt_x7013"))),
     amt_overtime = rowSums(across(starts_with("amt_x7015"))),
     amt_exception = rowSums(across(starts_with("amt_x7016"))),
-  ) %>% 
+  ) %>%
   mutate(
     amt_salary = amt_pay_base + amt_pay_additonal + amt_overtime + amt_exception,
     amt_benefits = rowSums(across(starts_with("amt_x7014"))),
     amt_terminal = amt_x7013007
-  ) %>% 
-  left_join(programs, by = join_by(program)) %>%
-  # mutate(across(prog_descr, str_squish)) %>%
+  ) %>%
+  mutate(amt_total = (amt_nonpersonnel + amt_salary + amt_benefits)) %>%
   # corrections
+  mutate(costcenter = if_else(costcenter == "60030", "40081", costcenter)) %>%
   mutate(program = if_else(program == "600181", "400267", program)) %>%
-  mutate(prog_descr = if_else(program == "400267", "STUDENT PLACEMENT - SS", prog_descr)) %>%
-  mutate(cost_center = if_else(cost_center == "60030", "40081", cost_center)) %>%
-  mutate(cost_cntr_descr = if_else(cost_center == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", cost_cntr_descr))
-
-data_485_clean
-
+  mutate(costcenter_name = if_else(costcenter_name == "40079", "OFFICE OF DATA AND TECHNOLOGY", costcenter_name)) %>%
+  mutate(costcenter_name = if_else(costcenter == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", costcenter_name)) %>%
+  mutate(program_name = if_else(program == "400267", "STUDENT PLACEMENT - SS", program_name)) %>%
+  left_join(programs, by = join_by(program)) %>%
+  left_join(categorization_prev, by = join_by(costcenter, position)) %>%
+  left_join(categorization_sp, by = join_by(costcenter, program_2, program)) %>%
+  mutate(categorization = if_else(is.na(categorization_prev), categorization_sp, categorization_prev))
 ```
 
 Write
 
 ```{r}
-costcenter_categories <-
-  data_485_clean %>%
-  group_by(
-    cost_cntr_descr, cost_center,
-    program_parent_level_2_description, program_parent_level_2,
-    prog_descr, program,
-  ) %>%
-  summarize(amt_r023 = sum(amt_r023))
-
-costcenter_categories %>% write_xlsx("data/costcenter_categories.xlsx")
+data_485_clean %>% write_xlsx("data/485_clean.xlsx")
 ```
 
+Schedules
+
+D.1
+
 ```{r}
-data_485_clean %>% write_xlsx("data/485_clean.xlsx")
+schedule_d1 <-
+  data_485_clean %>%
+  group_by(
+    costcenter, program_2, program, position,
+    costcenter_name, program_2_name, program_name,
+    name, categorization
+  ) %>%
+  summarize(
+    amt_salary = sum(amt_salary),
+    amt_benefits = sum(amt_benefits)
+  ) %>%
+  ungroup() %>%
+  relocate(c(categorization, costcenter_name, program_2_name, program_name, name)) %>%
+  mutate(
+    amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
+    amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
+    amt_total = amt_salary + amt_benefits
+  ) %>%
+  # slice_sample(n = 10) %>%
+  arrange(costcenter_name, program_2_name, program_name, name) %>%
+  relocate(c(costcenter, program_2, program, position), .after = last_col())
+
+schedule_d1
+
+schedule_d1 %>% write_xlsx("schedules/schedule_d1.xlsx")
 ```
