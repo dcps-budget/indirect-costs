@@ -7,6 +7,7 @@ TODO:
 
 * Position titles from PFR
 * Head of component
+* True up to GL
 
 Depends on:
 
@@ -41,7 +42,7 @@ path_working <- glue(
   .sep = "/"
 )
 
-fy <- "2024"
+fy <- 2024
 
 dir_485 <- glue("{path_data}/Personnel/485/raw/{fy}")
 
@@ -77,6 +78,7 @@ programs <- read_excel("data/programs.xlsx")
 categorization_prev <-
   read_excel("data/personnel_2023.xlsx", col_types = "text") %>%
   clean_names() %>%
+  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
   distinct(costcenter, position, categorization_prev = position_type) %>%
   arrange(costcenter, position, categorization_prev)
 
@@ -89,6 +91,34 @@ categorization_sp <-
   ) %>%
   clean_names() %>%
   select(costcenter, program_2, program, categorization_sp)
+
+pfr_start <-
+  read_csv(
+    glue("{path_data}/Personnel/PeopleSoft/raw/{fy}/pfr_{fy - 1}-10-01.csv"),
+    col_types = cols(.default = col_character()),
+    skip = 5,
+    n_max = 14981
+  ) %>%
+  clean_names() %>%
+  rename(costcenter = cost_center, position = position_number) %>%
+  mutate(across(c(costcenter, position), \(x) str_remove_all(x, "=*\""))) %>%
+  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
+  mutate(across(c(title), \(x) str_to_upper(str_squish(x)))) %>%
+  distinct(position, title_start = title)
+
+pfr_end <-
+  read_csv(
+    glue("{path_data}/Personnel/PeopleSoft/raw/{fy}/pfr_{fy}-09-30.csv"),
+    col_types = cols(.default = col_character()),
+    skip = 5,
+    n_max = 14892
+  ) %>%
+  clean_names() %>%
+  rename(costcenter = cost_center, position = position_number) %>%
+  mutate(across(c(costcenter, position), \(x) str_remove_all(x, "=*\""))) %>%
+  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
+  mutate(across(c(title), \(x) str_to_upper(str_squish(x)))) %>%
+  distinct(position, title_end = title)
 ```
 
 ```{r}
@@ -140,6 +170,7 @@ data_485_clean <-
     sort(starts_with("amt_")),
     everything()
   ) %>%
+  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
   mutate(across(c(starts_with("amt_"), amttot), \(x) (as.numeric(x)))) %>%
   mutate(amt_nonpersonnel = rowSums(across(c(amt_spc_expense:amt_x3112009, amt_x7131002:amt_x7196007)))) %>%
   mutate(
@@ -157,13 +188,22 @@ data_485_clean <-
   # corrections
   mutate(costcenter = if_else(costcenter == "60030", "40081", costcenter)) %>%
   mutate(program = if_else(program == "600181", "400267", program)) %>%
-  mutate(costcenter_name = if_else(costcenter_name == "40079", "OFFICE OF DATA AND TECHNOLOGY", costcenter_name)) %>%
-  mutate(costcenter_name = if_else(costcenter == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", costcenter_name)) %>%
+  mutate(
+    costcenter_name = if_else(costcenter_name == "40079", "OFFICE OF DATA AND TECHNOLOGY", costcenter_name)
+  ) %>%
+  mutate(
+    costcenter_name = if_else(costcenter == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", costcenter_name)
+  ) %>%
   mutate(program_name = if_else(program == "400267", "STUDENT PLACEMENT - SS", program_name)) %>%
   left_join(programs, by = join_by(program)) %>%
+  left_join(pfr_start, by = join_by(position)) %>%
+  left_join(pfr_end, by = join_by(position)) %>%
   left_join(categorization_prev, by = join_by(costcenter, position)) %>%
   left_join(categorization_sp, by = join_by(costcenter, program_2, program)) %>%
+  mutate(title = if_else(is.na(title_end), title_start, title_end)) %>%
   mutate(categorization = if_else(is.na(categorization_prev), categorization_sp, categorization_prev))
+
+data_485_clean
 ```
 
 Write
@@ -181,7 +221,7 @@ schedule_d1 <-
   data_485_clean %>%
   group_by(
     costcenter, program_2, program, position,
-    costcenter_name, program_2_name, program_name,
+    costcenter_name, program_2_name, program_name, title,
     name, categorization
   ) %>%
   summarize(
@@ -189,13 +229,13 @@ schedule_d1 <-
     amt_benefits = sum(amt_benefits)
   ) %>%
   ungroup() %>%
-  relocate(c(categorization, costcenter_name, program_2_name, program_name, name)) %>%
+  relocate(c(categorization, costcenter_name, program_2_name, program_name, name, title)) %>%
   mutate(
     amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
     amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
     amt_total = amt_salary + amt_benefits
   ) %>%
-  # slice_sample(n = 10) %>%
+  slice_sample(n = 10) %>%
   arrange(costcenter_name, program_2_name, program_name, name) %>%
   relocate(c(costcenter, program_2, program, position), .after = last_col())
 
