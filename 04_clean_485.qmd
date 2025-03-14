@@ -5,7 +5,7 @@ format: html
 
 TODO:
 
-* Position titles from PFR
+* Payroll default records
 * Head of component
 * True up to GL
 
@@ -78,7 +78,9 @@ programs <- read_excel("data/programs.xlsx")
 categorization_prev <-
   read_excel("data/personnel_2023.xlsx", col_types = "text") %>%
   clean_names() %>%
-  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
+  mutate(
+    across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))
+  ) %>%
   distinct(costcenter, position, categorization_prev = position_type) %>%
   arrange(costcenter, position, categorization_prev)
 
@@ -102,7 +104,9 @@ pfr_start <-
   clean_names() %>%
   rename(costcenter = cost_center, position = position_number) %>%
   mutate(across(c(costcenter, position), \(x) str_remove_all(x, "=*\""))) %>%
-  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
+  mutate(
+    across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))
+  ) %>%
   mutate(across(c(title), \(x) str_to_upper(str_squish(x)))) %>%
   distinct(position, title_start = title)
 
@@ -116,9 +120,21 @@ pfr_end <-
   clean_names() %>%
   rename(costcenter = cost_center, position = position_number) %>%
   mutate(across(c(costcenter, position), \(x) str_remove_all(x, "=*\""))) %>%
-  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
+  mutate(
+    across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))
+  ) %>%
   mutate(across(c(title), \(x) str_to_upper(str_squish(x)))) %>%
   distinct(position, title_end = title)
+
+titles_manual <-
+  read_excel(
+    glue(
+      "{path_working}/Missing - Title.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  distinct(position, title_manual)
 ```
 
 ```{r}
@@ -171,8 +187,11 @@ data_485_clean <-
     everything()
   ) %>%
   mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
+  mutate(across(c(name), \(x) str_to_upper(str_squish(x)))) %>%
   mutate(across(c(starts_with("amt_"), amttot), \(x) (as.numeric(x)))) %>%
-  mutate(amt_nonpersonnel = rowSums(across(c(amt_spc_expense:amt_x3112009, amt_x7131002:amt_x7196007)))) %>%
+  mutate(
+    amt_nonpersonnel = rowSums(across(c(amt_spc_expense:amt_x3112009, amt_x7131002:amt_x7196007)))
+  ) %>%
   mutate(
     amt_pay_base = rowSums(across(starts_with("amt_x7011") | starts_with("amt_x7012"))),
     amt_pay_additonal = rowSums(across(starts_with("amt_x7013"))),
@@ -185,7 +204,8 @@ data_485_clean <-
     amt_terminal = amt_x7013007
   ) %>%
   mutate(amt_total = (amt_nonpersonnel + amt_salary + amt_benefits)) %>%
-  # corrections
+  # small corrections
+  mutate(position = if_else(emplid == "87062", "00089440", position)) %>%
   mutate(costcenter = if_else(costcenter == "60030", "40081", costcenter)) %>%
   mutate(program = if_else(program == "600181", "400267", program)) %>%
   mutate(
@@ -194,22 +214,75 @@ data_485_clean <-
   mutate(
     costcenter_name = if_else(costcenter == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", costcenter_name)
   ) %>%
-  mutate(program_name = if_else(program == "400267", "STUDENT PLACEMENT - SS", program_name)) %>%
+  mutate(
+    program_name = if_else(program == "400267", "STUDENT PLACEMENT - SS", program_name)
+  )
+```
+
+```{r}
+names_clean <-
+  data_485_clean %>%
+  distinct(emplid, name, pp_485) %>%
+  group_by(emplid) %>%
+  slice_max(order_by = pp_485, n = 1) %>%
+  ungroup() %>%
+  select(emplid, name_clean = name)
+```
+
+```{r}
+costcenters_default <-
+  data_485_clean %>%
+  filter(program_name == "PAYROLL DEFAULT") %>%
+  distinct(emplid) %>%
+  left_join(data_485_clean, by = join_by(emplid)) %>%
+  filter(program_name != "PAYROLL DEFAULT") %>%
+  group_by(emplid, costcenter, costcenter_name, program, program_name) %>%
+  summarize(amt_total = sum(amt_total)) %>%
+  group_by(emplid) %>%
+  slice_max(order_by = amt_total, n = 1) %>%
+  ungroup() %>%
+  select(
+    emplid,
+    costcenter_default = costcenter, costcenter_name_default = costcenter_name,
+    program_default = program, program_name_default = program_name
+  ) %>%
+  mutate(is_default = TRUE)
+```
+
+Augment
+
+```{r}
+data_485_aug <-
+  data_485_clean %>%
+  mutate(is_default = if_else(program_name == "PAYROLL DEFAULT", TRUE, FALSE)) %>%
+  left_join(costcenters_default, by = join_by(emplid, is_default)) %>%
+  mutate(
+    costcenter = if_else(!is.na(costcenter_default), costcenter_default, costcenter),
+    costcenter_name = if_else(!is.na(costcenter_name_default), costcenter_name_default, costcenter_name),
+    program = if_else(!is.na(program_default), program_default, program),
+    program_name = if_else(!is.na(program_name_default), program_name_default, program_name)
+  ) %>%
   left_join(programs, by = join_by(program)) %>%
   left_join(pfr_start, by = join_by(position)) %>%
   left_join(pfr_end, by = join_by(position)) %>%
+  left_join(titles_manual, by = join_by(position)) %>%
+  left_join(names_clean, by = join_by(emplid)) %>%
   left_join(categorization_prev, by = join_by(costcenter, position)) %>%
   left_join(categorization_sp, by = join_by(costcenter, program_2, program)) %>%
-  mutate(title = if_else(is.na(title_end), title_start, title_end)) %>%
-  mutate(categorization = if_else(is.na(categorization_prev), categorization_sp, categorization_prev))
-
-data_485_clean
+  mutate(title = case_when(
+    !is.na(title_end) ~ title_end,
+    !is.na(title_start) ~ title_start,
+    .default = title_manual
+  )) %>%
+  mutate(
+    categorization = if_else(is.na(categorization_prev), categorization_sp, categorization_prev)
+  )
 ```
 
 Write
 
 ```{r}
-data_485_clean %>% write_xlsx("data/485_clean.xlsx")
+# data_485_clean %>% write_xlsx("data/485_clean.xlsx")
 ```
 
 Schedules
@@ -218,28 +291,28 @@ D.1
 
 ```{r}
 schedule_d1 <-
-  data_485_clean %>%
+  data_485_aug %>%
   group_by(
-    costcenter, program_2, program, position,
-    costcenter_name, program_2_name, program_name, title,
-    name, categorization
+    costcenter, program_2, program, position, emplid,
+    costcenter_name, program_2_name, program_name, title, name_clean,
+    categorization
   ) %>%
   summarize(
     amt_salary = sum(amt_salary),
     amt_benefits = sum(amt_benefits)
   ) %>%
   ungroup() %>%
-  relocate(c(categorization, costcenter_name, program_2_name, program_name, name, title)) %>%
+  relocate(
+    c(categorization, costcenter_name, program_2_name, program_name, title, name_clean)
+  ) %>%
   mutate(
     amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
     amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
     amt_total = amt_salary + amt_benefits
   ) %>%
-  slice_sample(n = 10) %>%
-  arrange(costcenter_name, program_2_name, program_name, name) %>%
-  relocate(c(costcenter, program_2, program, position), .after = last_col())
-
-schedule_d1
+  # slice_sample(n = 10) %>%
+  arrange(costcenter_name, program_2_name, program_name, title, name_clean) %>%
+  relocate(c(costcenter, program_2, program, position, emplid), .after = last_col())
 
 schedule_d1 %>% write_xlsx("schedules/schedule_d1.xlsx")
 ```
