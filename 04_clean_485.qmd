@@ -6,7 +6,6 @@ format: html
 TODO:
 
 * Payroll default records
-* Head of component
 * True up to GL
 
 Depends on:
@@ -92,7 +91,17 @@ categorization_sp <-
     col_types = "text"
   ) %>%
   clean_names() %>%
-  select(costcenter, program_2, program, categorization_sp)
+  select(costcenter, program_2, program, categorization_sp, costcenter_name_clean)
+
+categorization_override <-
+  read_excel(
+    glue(
+      "{path_working}/Override Personnel.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  distinct(costcenter, position, categorization_override)
 
 pfr_start <-
   read_csv(
@@ -125,6 +134,16 @@ pfr_end <-
   ) %>%
   mutate(across(c(title), \(x) str_to_upper(str_squish(x)))) %>%
   distinct(position, title_end = title)
+
+headcomponent <-
+  read_excel(
+    glue(
+      "{path_working}/Head of Component.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  distinct(costcenter, position, is_executive, is_headcomponent)
 
 titles_manual <-
   read_excel(
@@ -204,18 +223,30 @@ data_485_clean <-
     amt_terminal = amt_x7013007
   ) %>%
   mutate(amt_total = (amt_nonpersonnel + amt_salary + amt_benefits)) %>%
-  # small corrections
+  # correction
   mutate(position = if_else(emplid == "87062", "00089440", position)) %>%
+  # correction
   mutate(costcenter = if_else(costcenter == "60030", "40081", costcenter)) %>%
-  mutate(program = if_else(program == "600181", "400267", program)) %>%
-  mutate(
-    costcenter_name = if_else(costcenter_name == "40079", "OFFICE OF DATA AND TECHNOLOGY", costcenter_name)
-  ) %>%
   mutate(
     costcenter_name = if_else(costcenter == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", costcenter_name)
   ) %>%
+  # correction
+  mutate(
+    costcenter_name = if_else(costcenter == "40079", "OFFICE OF DATA AND TECHNOLOGY", costcenter_name)
+  ) %>%
+  # correction
+  mutate(program = if_else(program == "600181", "400267", program)) %>%
   mutate(
     program_name = if_else(program == "400267", "STUDENT PLACEMENT - SS", program_name)
+  ) %>%
+  # correction
+  mutate(program = if_else(position == "00108956", "400011", program)) %>%
+  mutate(
+    program_name = if_else(program == "400011", "FOOD SERVICES - SWCS", program_name)
+  ) %>%
+  mutate(costcenter = if_else(program == "400011", "40078", costcenter)) %>%
+  mutate(
+    costcenter_name = if_else(costcenter == "40078", "OFFICE OF CHIEF OPERATING OFFICER", costcenter_name)
   )
 ```
 
@@ -267,6 +298,8 @@ data_485_aug <-
   left_join(pfr_end, by = join_by(position)) %>%
   left_join(titles_manual, by = join_by(position)) %>%
   left_join(names_clean, by = join_by(emplid)) %>%
+  left_join(headcomponent, by = join_by(costcenter, position)) %>%
+  left_join(categorization_override, by = join_by(costcenter, position)) %>%
   left_join(categorization_prev, by = join_by(costcenter, position)) %>%
   left_join(categorization_sp, by = join_by(costcenter, program_2, program)) %>%
   mutate(title = case_when(
@@ -274,15 +307,23 @@ data_485_aug <-
     !is.na(title_start) ~ title_start,
     .default = title_manual
   )) %>%
+  mutate(headcomponent = case_when(
+    is_executive == 1 ~ "Executive",
+    is_headcomponent == 1 ~ "Head of component",
+    .default = "Non-executive"
+  )) %>%
   mutate(
-    categorization = if_else(is.na(categorization_prev), categorization_sp, categorization_prev)
+    categorization = case_when(
+      costcenter_name_clean == "Schools" ~ "Direct",
+      !is.na(categorization_override) ~ categorization_override,
+      !is.na(categorization_prev) ~ categorization_prev,
+      .default = categorization_sp
+    )
+  ) %>%
+  mutate(
+    costcenter_clean = if_else(costcenter_name_clean == "Schools", "SCHOOLS", costcenter, missing = costcenter),
+    costcenter_name_clean = if_else(!is.na(costcenter_name_clean), costcenter_name_clean, costcenter_name, , missing = costcenter_name)
   )
-```
-
-Write
-
-```{r}
-# data_485_clean %>% write_xlsx("data/485_clean.xlsx")
 ```
 
 Schedules
@@ -293,8 +334,8 @@ D.1
 schedule_d1 <-
   data_485_aug %>%
   group_by(
-    costcenter, program_2, program, position, emplid,
-    costcenter_name, program_2_name, program_name, title, name_clean,
+    costcenter_clean, costcenter, program_2, program, position, emplid, headcomponent,
+    costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean,
     categorization
   ) %>%
   summarize(
@@ -303,16 +344,86 @@ schedule_d1 <-
   ) %>%
   ungroup() %>%
   relocate(
-    c(categorization, costcenter_name, program_2_name, program_name, title, name_clean)
+    c(categorization, costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean, headcomponent)
   ) %>%
   mutate(
     amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
     amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
-    amt_total = amt_salary + amt_benefits
+    amt_total = amt_salary + amt_benefits,
+    amt_headcomponent_total = if_else(headcomponent != "Non-executive", amt_total, 0),
+    amt_headcomponent_indirect = if_else(headcomponent != "Non-executive" & categorization == "Indirect", amt_total, 0)
   ) %>%
   # slice_sample(n = 10) %>%
-  arrange(costcenter_name, program_2_name, program_name, title, name_clean) %>%
-  relocate(c(costcenter, program_2, program, position, emplid), .after = last_col())
+  arrange(costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean) %>%
+  relocate(c(costcenter_clean, program_2, program, position, emplid), .after = last_col())
 
 schedule_d1 %>% write_xlsx("schedules/schedule_d1.xlsx")
+```
+
+Validations
+
+Unique combinations
+
+```{r}
+data_485_aug %>%
+  distinct(
+    costcenter_name_clean, costcenter_name, program_name, title, name_clean,
+    costcenter_clean, costcenter, program_2, position, emplid,
+    categorization
+  ) %>%
+  nrow()
+```
+
+Every position is associated with only 1 title.
+
+PASS
+
+```{r}
+data_485_aug %>%
+  distinct(position, title) %>%
+  count(position, sort = T) %>%
+  filter(n > 1)
+```
+
+Every employee ID is associated with only 1 name.
+
+PASS
+
+```{r}
+data_485_aug %>%
+  distinct(emplid, name_clean) %>%
+  count(emplid, sort = T) %>%
+  filter(n > 1)
+```
+
+Every cost center, position group is associated with only 1 categorization.
+
+PASS
+
+```{r}
+data_485_aug %>%
+  distinct(costcenter, position, categorization) %>%
+  count(costcenter, position, sort = T) %>%
+  filter(n > 1)
+```
+
+Cost centers with more than 1 categorization.
+
+```{r}
+costcenters_multiple <-
+  schedule_d1 %>%
+  distinct(costcenter, categorization) %>%
+  count(costcenter, sort = TRUE) %>%
+  filter(n > 1) %>%
+  filter(costcenter != "10002") %>%
+  select(costcenter) %>%
+  left_join(schedule_d1) %>%
+  distinct(
+    categorization,
+    costcenter_name, program_2_name, program_name, title, name_clean,
+    costcenter, program_2, program, position, emplid
+  ) %>%
+  arrange(costcenter_name, program_2_name, program_name, title, categorization)
+
+costcenters_multiple %>% count(costcenter_name, categorization)
 ```
