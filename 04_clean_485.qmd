@@ -365,6 +365,12 @@ Validations
 Unique combinations
 
 ```{r}
+categorization_override %>%
+  distinct(position, costcenter, categorization_override) %>%
+  count(position, costcenter, sort = T)
+```
+
+```{r}
 data_485_aug %>%
   distinct(
     costcenter_name_clean, costcenter_name, program_name, title, name_clean,
