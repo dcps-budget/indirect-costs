@@ -366,12 +366,6 @@ Validations
 Unique combinations
 
 ```{r}
-categorization_override %>%
-  distinct(costcenter, position, categorization_override) %>%
-  count(costcenter, position, sort = T)
-```
-
-```{r}
 data_485_aug %>%
   distinct(
     costcenter_name_clean, costcenter_name, program_name, title, name_clean,
@@ -433,5 +427,8 @@ schedule_d1 %>%
   filter(costcenter != "10002") %>%
   distinct(costcenter_name_clean, categorization) %>%
   count(costcenter_name_clean, sort = TRUE) %>%
-  filter(n > 1)
+  filter(n > 1) %>% 
+  select(costcenter_name_clean) %>%
+  left_join(schedule_d1) %>%
+  count(costcenter_name_clean, categorization)
 ```
