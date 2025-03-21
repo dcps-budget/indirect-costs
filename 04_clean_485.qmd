@@ -324,6 +324,11 @@ data_485_aug <-
   mutate(
     costcenter_clean = if_else(costcenter_name_clean == "Schools", "SCHOOLS", costcenter, missing = costcenter),
     costcenter_name_clean = if_else(!is.na(costcenter_name_clean), costcenter_name_clean, costcenter_name, , missing = costcenter_name)
+  ) %>%
+  mutate(
+    costcenter_name_clean = if_else(program_name == "PAYROLL DEFAULT", "ZZZ - PAYROLL DEFAULT", costcenter_name_clean),
+    costcenter_name = if_else(program_name == "PAYROLL DEFAULT", "ZZZ - PAYROLL DEFAULT", costcenter_name),
+    program_2_name = if_else(program_name == "PAYROLL DEFAULT", "ZZZ - PAYROLL DEFAULT", program_2_name),
   )
 ```
 
@@ -356,7 +361,7 @@ schedule_d1 <-
   ) %>%
   # slice_sample(n = 10) %>%
   arrange(costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean) %>%
-  relocate(c(costcenter_clean, program_2, program, position, emplid), .after = last_col())
+  relocate(c(costcenter_clean, costcenter, program_2, program, position, emplid), .after = last_col())
 
 schedule_d1 %>% write_xlsx("schedules/schedule_d1.xlsx")
 ```
@@ -427,7 +432,7 @@ schedule_d1 %>%
   filter(costcenter != "10002") %>%
   distinct(costcenter_name_clean, categorization) %>%
   count(costcenter_name_clean, sort = TRUE) %>%
-  filter(n > 1) %>% 
+  filter(n > 1) %>%
   select(costcenter_name_clean) %>%
   left_join(schedule_d1) %>%
   count(costcenter_name_clean, categorization)
