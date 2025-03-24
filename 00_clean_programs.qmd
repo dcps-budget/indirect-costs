@@ -1,5 +1,5 @@
 ---
-title: "Programs"
+title: "Clean Programs"
 format: html
 ---
 
@@ -27,6 +27,7 @@ path_data <- glue(
 fy <- "2024"
 
 path_r025 <- glue("{path_data}/Budget/R025/raw/{fy}/r025_{fy}.xls")
+range_r025 <- "A19:AJ52841"
 ```
 
 Read
@@ -35,7 +36,7 @@ R025
 
 ```{r}
 r025_raw <-
-  read_excel(path_r025, col_types = "text", range = "A19:AJ52841") %>%
+  read_excel(path_r025, col_types = "text", range = range_r025) %>%
   clean_names()
 
 r025 <- r025_raw

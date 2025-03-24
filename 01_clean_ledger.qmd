@@ -1,13 +1,14 @@
 ---
-title: "Indirect Cost Rates"
+title: "Clean Ledger"
 format: html
 ---
 
 ```{r}
 library(tidyverse)
 library(glue)
-library(readxl)
 library(janitor)
+library(readxl)
+library(writexl)
 
 options(scipen = 12, digits = 12)
 ```
@@ -23,19 +24,19 @@ path_data <- glue(
   .sep = "/"
 )
 
+fy <- "2024"
+
 path_r209 <-
-  glue("{path_data}/Budget/R209/raw/2024/r209_GD0_GA0_2024.xlsx")
+  glue("{path_data}/Budget/R209/raw/{fy}/r209_GD0_GA0_{fy}.xlsx")
 
 path_r023_ga0 <-
-  glue("{path_data}/General Ledger/R023/raw/2024/r023_expense_GA0_2024.xls")
+  glue("{path_data}/General Ledger/R023/raw/{fy}/r023_expense_GA0_{fy}.xls")
 
 path_r023_gd0 <-
-  glue("{path_data}/General Ledger/R023/raw/2024/r023_expense_GD0_2024.xls")
+  glue("{path_data}/General Ledger/R023/raw/{fy}/r023_expense_GD0_{fy}.xls")
 ```
 
-Read
-
-209
+Read R209
 
 ```{r}
 r209_raw <-
@@ -45,7 +46,7 @@ r209_raw <-
 r209 <- r209_raw
 ```
 
-023
+Read R023
 
 ```{r}
 r023_ga0 <-
@@ -128,14 +129,11 @@ r023_clean %>%
 ```
 
 ```{r}
-
-r023_clean %>% 
-  group_by(account_category_desc) %>% 
+r023_clean %>%
+  group_by(account_category_desc) %>%
   summarize(ending_balance = sum(ending_balance))
-
 ```
 
 ```{r}
-r023_clean %>%
-  writexl::write_xlsx("data/r023_clean.xlsx")
+r023_clean %>% write_xlsx("data/ledger.xlsx")
 ```
