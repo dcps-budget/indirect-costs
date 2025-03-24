@@ -334,10 +334,8 @@ data_485_aug <-
 
 Schedules
 
-D.1
-
 ```{r}
-schedule_d1 <-
+personnel <-
   data_485_aug %>%
   group_by(
     costcenter_clean, costcenter, program_2, program, position, emplid, headcomponent,
@@ -346,7 +344,8 @@ schedule_d1 <-
   ) %>%
   summarize(
     amt_salary = sum(amt_salary),
-    amt_benefits = sum(amt_benefits)
+    amt_benefits = sum(amt_benefits),
+    amt_terminal = sum(amt_terminal)
   ) %>%
   ungroup() %>%
   relocate(
@@ -356,14 +355,40 @@ schedule_d1 <-
     amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
     amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
     amt_total = amt_salary + amt_benefits,
+    amt_headcomponent_direct = if_else(headcomponent != "Non-executive" & categorization == "Direct", amt_total, 0),
+    amt_headcomponent_indirect = if_else(headcomponent != "Non-executive" & categorization == "Indirect", amt_total, 0),
     amt_headcomponent_total = if_else(headcomponent != "Non-executive", amt_total, 0),
-    amt_headcomponent_indirect = if_else(headcomponent != "Non-executive" & categorization == "Indirect", amt_total, 0)
+    amt_terminal_to_indirect = if_else(categorization == "Direct" & headcomponent == "Non-executive", amt_terminal, 0),
+    amt_terminal_restricted = if_else(headcomponent != "Non-executive", amt_terminal, 0)
   ) %>%
-  # slice_sample(n = 10) %>%
   arrange(costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean) %>%
   relocate(c(costcenter_clean, costcenter, program_2, program, position, emplid), .after = last_col())
 
+personnel
+```
+
+D.1
+
+```{r}
+schedule_d1 <-
+  personnel %>%
+  select(!starts_with("amt_terminal"))
+
 schedule_d1 %>% write_xlsx("schedules/schedule_d1.xlsx")
+```
+
+E
+
+```{r}
+schedule_e <-
+  personnel %>%
+  select(!c(
+    amt_salary, amt_benefits,
+    amt_direct, amt_indirect, amt_total,
+    amt_headcomponent_direct, amt_headcomponent_indirect, amt_headcomponent_total
+  ))
+
+schedule_e %>% write_xlsx("schedules/schedule_e.xlsx")
 ```
 
 Validations
@@ -416,7 +441,7 @@ data_485_aug %>%
 Cost centers with only 1 categorization.
 
 ```{r}
-schedule_d1 %>%
+personnel %>%
   distinct(costcenter_name_clean, categorization) %>%
   count(costcenter_name_clean, sort = TRUE) %>%
   filter(n == 1) %>%
@@ -428,7 +453,7 @@ schedule_d1 %>%
 Cost centers with more than 1 categorization.
 
 ```{r}
-schedule_d1 %>%
+personnel %>%
   filter(costcenter != "10002") %>%
   distinct(costcenter_name_clean, categorization) %>%
   count(costcenter_name_clean, sort = TRUE) %>%
