@@ -64,11 +64,24 @@ costcenters <-
     )
   ) %>%
   distinct(costcenter, costcenter_clean, costcenter_name_clean)
+
+categorizations_previous <-
+  read_excel(
+    glue(
+      "{path_working}/Previous Categorization - PO.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  mutate(across(po_number, str_squish)) %>%
+  distinct(po_number, po_categorization_previous)
 ```
 
-Read programs
+Read in lookup information
 
 ```{r}
+pos <- read_excel("data/pos.xlsx")
+
 programs <- read_excel("data/programs.xlsx")
 ```
 
@@ -111,6 +124,27 @@ r051a_rename <-
 Clean and transform
 
 ```{r}
+services_excluded <- c(
+  "7131015",
+  "7131024",
+  "7131045",
+  "7132004",
+  "7131019",
+  "7131016",
+  "7131006",
+  "7131007",
+  "7131033",
+  "7131025",
+  "7131017",
+  "7131012",
+  "7131014",
+  "7131002",
+  "7131003",
+  "7131020"
+)
+```
+
+```{r}
 r051a_clean <-
   r051a_rename %>%
   filter(agency == "GA0" | (project %in% r209$project)) %>%
@@ -120,7 +154,7 @@ r051a_clean <-
     transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
   )) %>%
   mutate(is_po = !is.na(po_number)) %>%
-  mutate(is_service = str_detect(account_parent_1, "^713[12]"))
+  mutate(is_service = str_detect(account_parent_1, "^713[12]") & !(account %in% services_excluded))
 ```
 
 Join programs
@@ -129,71 +163,67 @@ Join programs
 r051a_aug <-
   r051a_clean %>%
   left_join(costcenters, by = join_by(costcenter)) %>%
-  left_join(programs, by = join_by(program))
+  left_join(programs, by = join_by(program)) %>%
+  left_join(categorizations_previous, by = join_by(po_number)) %>%
+  left_join(pos, by = join_by(po_number))
 ```
 
 ```{r}
-pos_dedupe <-
+pos_r051a <-
   r051a_aug %>%
   filter(is_po) %>%
-  group_by(
-    po_number,
-    costcenter_name_clean, costcenter_clean,
-    account, account_desc,
-    is_service, party_name
-  ) %>%
-  summarize(net_accounted = sum(net_accounted)) %>%
-  filter(net_accounted != 0.00) %>%
-  group_by(po_number) %>%
-  slice_max(order_by = net_accounted, n = 1) %>%
-  slice_max(order_by = costcenter_clean, n = 1) %>%
-  slice_max(order_by = account, n = 1) %>%
-  ungroup() %>%
   distinct(
-    po_is_service = is_service,
-    po_costcenter_name = costcenter_name_clean,
-    po_account_name = account_desc,
-    po_vendor = party_name,
-    po_costcenter = costcenter_clean,
-    po_account = account,
-    po_number,
+    po_categorization_previous,
+    is_service, party_name, po_title, po_line_item_description,
+    account_desc, costcenter_name_clean,
+    account, costcenter_clean, po_number
   ) %>%
   arrange(
-    desc(po_is_service),
-    po_costcenter_name, po_account_name, po_vendor, po_number
+    desc(is_service), party_name, po_title, po_line_item_description,
+    account_desc, costcenter_name_clean,
+    account, costcenter_clean, po_number
   )
 
-pos_dedupe
+pos_r051a %>% write_xlsx("data/pos_r051a.xlsx")
+
+pos_r051a
 ```
 
 ```{r}
-# r051a_po <-
-#   r051a_clean %>%
-#   filter(is_po, is_service) %>%
-#   select(
-#     program_parent_level_2_description, cost_center_desc,
-#     party_name, account_desc, po_number
+# pos_dedupe <-
+#   r051a_aug %>%
+#   filter(is_po) %>%
+#   group_by(
+#     po_number,
+#     costcenter_name_clean, costcenter_clean,
+#     account, account_desc,
+#     is_service, party_name
+#   ) %>%
+#   summarize(net_accounted = sum(net_accounted)) %>%
+#   filter(net_accounted != 0.00) %>%
+#   group_by(po_number) %>%
+#   slice_max(order_by = net_accounted, n = 1) %>%
+#   slice_max(order_by = costcenter_clean, n = 1) %>%
+#   slice_max(order_by = account, n = 1) %>%
+#   ungroup() %>%
+#   distinct(
+#     po_is_service = is_service,
+#     po_costcenter_name = costcenter_name_clean,
+#     po_account_name = account_desc,
+#     po_vendor = party_name,
+#     po_costcenter = costcenter_clean,
+#     po_account = account,
+#     po_number,
 #   ) %>%
 #   arrange(
-#     program_parent_level_2_description, cost_center_desc,
-#     party_name, account_desc, po_number
+#     desc(po_is_service),
+#     po_costcenter_name, po_account_name, po_vendor, po_number
 #   )
-```
-
-Account categories
-
-```{r}
-# account_categories <-
-#   r051a_clean %>%
-#   count(account_desc, account)
-```
-
-Write
-
-```{r}
-# r051a_clean %>% write_xlsx("data/r051a_clean.xlsx")
 #
-# r051a_po %>% write_xlsx("data/r051a_po.xlsx")
+# pos_dedupe
 #
-# account_categories %>% write_xlsx("data/account_categories.xlsx")
+# r051a_aug %>%
+#   filter(is_po) %>%
+#   distinct(is_service, account_desc, party_name, costcenter_name_clean, costcenter_clean, account, po_number) %>%
+#   arrange(desc(is_service), account_desc, party_name, costcenter_name_clean, po_number)
 ```
