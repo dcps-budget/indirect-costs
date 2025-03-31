@@ -322,7 +322,7 @@ data_485_aug <-
     )
   ) %>%
   mutate(
-    costcenter_clean = if_else(costcenter_name_clean == "Schools", "SCHOOLS", costcenter, missing = costcenter),
+    costcenter_clean = if_else(costcenter_name_clean == "SCHOOLS", "SCHOOLS", costcenter, missing = costcenter),
     costcenter_name_clean = if_else(!is.na(costcenter_name_clean), costcenter_name_clean, costcenter_name, , missing = costcenter_name)
   ) %>%
   mutate(
@@ -332,7 +332,7 @@ data_485_aug <-
   )
 ```
 
-Schedules
+Output files
 
 ```{r}
 personnel <-
@@ -364,7 +364,48 @@ personnel <-
   arrange(costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean) %>%
   relocate(c(costcenter_clean, costcenter, program_2, program, position, emplid), .after = last_col())
 
-personnel
+personnel %>% write_xlsx("data/personnel.xlsx")
+```
+
+```{r}
+
+props_missing <- 
+  personnel %>% 
+  filter(costcenter_clean != "SCHOOLS") %>% 
+  count(categorization) %>% 
+  mutate(prop = n / sum(n)) %>% 
+  select(!n) %>% 
+  pivot_wider(
+    names_from = categorization, values_from = prop, values_fill = 0.0
+  ) %>% 
+  select(prop_direct = Direct, prop_indirect = Indirect) %>% 
+  slice(rep(1, each = 3)) %>% 
+  mutate(costcenter_clean = c(
+    "00000",
+    "30077",
+    "40203"
+    )
+  ) %>% 
+  relocate(costcenter_clean)
+
+props_missing
+
+```
+
+```{r}
+props_costcenter <- 
+  personnel %>% 
+  count(costcenter_clean, categorization) %>% 
+  group_by(costcenter_clean) %>% 
+  mutate(prop = n / sum(n)) %>% 
+  select(!n) %>% 
+  pivot_wider(
+    id_cols = costcenter_clean, names_from = categorization, values_from = prop, values_fill = 0.0
+  ) %>% 
+  select(costcenter_clean, prop_direct = Direct, prop_indirect = Indirect) %>% 
+  bind_rows(props_missing)
+
+props_costcenter %>% write_xlsx("data/props_costcenter.xlsx")
 ```
 
 D.1

@@ -165,7 +165,15 @@ r051a_aug <-
   left_join(costcenters, by = join_by(costcenter)) %>%
   left_join(programs, by = join_by(program)) %>%
   left_join(categorizations_previous, by = join_by(po_number)) %>%
-  left_join(pos, by = join_by(po_number))
+  left_join(pos, by = join_by(po_number)) %>% 
+  mutate(costcenter_clean = case_when(
+    is.na(costcenter_clean) ~ costcenter,
+    .default = costcenter_clean
+  ))
+```
+
+```{r}
+r051a_aug %>% write_xlsx("data/nonpersonnel.xlsx")
 ```
 
 ```{r}
@@ -174,56 +182,19 @@ pos_r051a <-
   filter(is_po) %>%
   distinct(
     po_categorization_previous,
-    is_service, party_name, po_title, po_line_item_description,
-    account_desc, costcenter_name_clean,
+    is_service, party_name, account_desc,
+    po_title, po_line_item_description,
+    costcenter_name_clean,
     account, costcenter_clean, po_number
   ) %>%
   arrange(
-    desc(is_service), party_name, po_title, po_line_item_description,
-    account_desc, costcenter_name_clean,
+    desc(is_service), party_name, account_desc,
+    po_title, po_line_item_description,
+    costcenter_name_clean,
     account, costcenter_clean, po_number
   )
 
 pos_r051a %>% write_xlsx("data/pos_r051a.xlsx")
 
 pos_r051a
-```
-
-```{r}
-# pos_dedupe <-
-#   r051a_aug %>%
-#   filter(is_po) %>%
-#   group_by(
-#     po_number,
-#     costcenter_name_clean, costcenter_clean,
-#     account, account_desc,
-#     is_service, party_name
-#   ) %>%
-#   summarize(net_accounted = sum(net_accounted)) %>%
-#   filter(net_accounted != 0.00) %>%
-#   group_by(po_number) %>%
-#   slice_max(order_by = net_accounted, n = 1) %>%
-#   slice_max(order_by = costcenter_clean, n = 1) %>%
-#   slice_max(order_by = account, n = 1) %>%
-#   ungroup() %>%
-#   distinct(
-#     po_is_service = is_service,
-#     po_costcenter_name = costcenter_name_clean,
-#     po_account_name = account_desc,
-#     po_vendor = party_name,
-#     po_costcenter = costcenter_clean,
-#     po_account = account,
-#     po_number,
-#   ) %>%
-#   arrange(
-#     desc(po_is_service),
-#     po_costcenter_name, po_account_name, po_vendor, po_number
-#   )
-#
-# pos_dedupe
-#
-# r051a_aug %>%
-#   filter(is_po) %>%
-#   distinct(is_service, account_desc, party_name, costcenter_name_clean, costcenter_clean, account, po_number) %>%
-#   arrange(desc(is_service), account_desc, party_name, costcenter_name_clean, po_number)
 ```

@@ -1,0 +1,58 @@
+---
+title: "Categorize Non-Personnel"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(glue)
+library(janitor)
+library(readxl)
+library(writexl)
+
+options(scipen = 12, digits = 12)
+```
+
+Setup
+
+```{r}
+path_data <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Data",
+  .sep = "/"
+)
+
+path_working <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Working Files - Indirect Cost",
+  .sep = "/"
+)
+
+```
+
+```{r}
+
+nonpersonnel <- read_excel("data/nonpersonnel.xlsx", col_types = "text")
+
+accounts <- 
+  read_excel(
+    glue("{path_working}/Categorization - Account.xlsx")
+  ) %>% 
+  select(!c(account_desc, is_always_direct, is_always_indirect))
+
+accounts
+
+```
+
+```{r}
+
+nonpersonnel %>% 
+  left_join(accounts, by = join_by(account)) %>% 
+  filter(is_split_occupancy == 1)
+```
+
+

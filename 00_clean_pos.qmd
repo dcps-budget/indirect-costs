@@ -56,16 +56,6 @@ r209 <- r209_raw
 R071
 
 ```{r}
-# r071_ga0 <-
-#   read_excel(path_r071_ga0, col_types = "text", range = "A23:AY8171") %>%
-#   clean_names()
-#
-# r071_gd0 <-
-#   read_excel(path_r071_gd0, col_types = "text", range = "A23:AY5118") %>%
-#   clean_names()
-#
-# r071_raw <- bind_rows(r071_ga0, r071_gd0)
-
 r071_raw <-
   read_excel(path_r071, col_types = "text", range = "A23:AY29404") %>%
   clean_names()
