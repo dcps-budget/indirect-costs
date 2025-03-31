@@ -38,6 +38,8 @@ path_working <- glue(
 
 nonpersonnel <- read_excel("data/nonpersonnel.xlsx", col_types = "text")
 
+props_costcenter <- read_excel("data/props_costcenter.xlsx")
+
 accounts <- 
   read_excel(
     glue("{path_working}/Categorization - Account.xlsx")
@@ -49,10 +51,11 @@ accounts
 ```
 
 ```{r}
-
 nonpersonnel %>% 
   left_join(accounts, by = join_by(account)) %>% 
-  filter(is_split_occupancy == 1)
+  left_join(props_costcenter, by = join_by(costcenter_clean)) %>% 
+  filter(costcenter_clean == "10086") %>% 
+  pull(net_accounted) %>% as.numeric() %>% sum()
 ```
 
 
