@@ -28,7 +28,12 @@ path_data <- glue(
 Read
 
 ```{r}
-r023 <- read_excel("data/r023_clean.xlsx")
+ledger <- read_excel("data/ledger.xlsx")
+
+nonpersonnel_categorized <- 
+  read_excel("data/nonpersonnel_categorized.xlsx", col_types = "text") %>% 
+  mutate(across(c(net_accounted, amt_direct, amt_indirect), \(x) round(as.numeric(x), 2)))
+
 ```
 
 D.2: Schedule of Fringe Benefits
@@ -43,7 +48,7 @@ fringe_other <- c(
 )
 
 fringe <-
-  r023 %>%
+  ledger %>%
   filter(account_class_desc == "FRINGE BENEFITS - CURR PERSONNEL") %>%
   mutate(
     account_desc = if_else(
@@ -68,3 +73,33 @@ schedule_d2 <-
 
 schedule_d2 %>% write_xlsx("schedules/schedule_d2.xlsx")
 ```
+
+Schedule H: Occupancy
+
+```{r}
+occupancy <- 
+  nonpersonnel_categorized %>% 
+  filter(is_split_occupancy == 1)
+
+occupancy_total <- 
+  occupancy %>% 
+  summarize(
+    net_accounted = sum(net_accounted),
+    amt_direct = sum(amt_direct),
+    amt_indirect = sum(amt_indirect)
+  ) %>% 
+  mutate(account_desc = "OCCUPANCY TOTAL")
+  
+occupancy %>% 
+  group_by(account_desc) %>% 
+  summarize(
+    net_accounted = sum(net_accounted),
+    amt_direct = sum(amt_direct),
+    amt_indirect = sum(amt_indirect)
+  ) %>% 
+  arrange(desc(net_accounted)) %>% 
+  bind_rows(occupancy_total)
+
+```
+
+

@@ -31,31 +31,35 @@ path_working <- glue(
   "Working Files - Indirect Cost",
   .sep = "/"
 )
-
 ```
 
 ```{r}
-
-nonpersonnel <- read_excel("data/nonpersonnel.xlsx", col_types = "text")
+nonpersonnel <- 
+  read_excel("data/nonpersonnel.xlsx", col_types = "text") %>% 
+  mutate(across(net_accounted, \(x) round(as.numeric(x), 2)))
 
 props_costcenter <- read_excel("data/props_costcenter.xlsx")
 
-accounts <- 
+accounts <-
   read_excel(
     glue("{path_working}/Categorization - Account.xlsx")
-  ) %>% 
+  ) %>%
   select(!c(account_desc, is_always_direct, is_always_indirect))
-
-accounts
-
 ```
 
 ```{r}
-nonpersonnel %>% 
-  left_join(accounts, by = join_by(account)) %>% 
+nonpersonnel_categorized <-
+  nonpersonnel %>%
+  left_join(accounts, by = join_by(account)) %>%
   left_join(props_costcenter, by = join_by(costcenter_clean)) %>% 
-  filter(costcenter_clean == "10086") %>% 
-  pull(net_accounted) %>% as.numeric() %>% sum()
+  mutate(
+    amt_direct = round(net_accounted * prop_direct, 2),
+    amt_indirect = round(net_accounted * prop_indirect, 2)
+  )
+
+nonpersonnel_categorized
 ```
 
-
+```{r}
+nonpersonnel_categorized %>% write_xlsx("data/nonpersonnel_categorized.xlsx")
+```
