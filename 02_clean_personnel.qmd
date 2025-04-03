@@ -379,11 +379,17 @@ props_missing <-
     names_from = categorization, values_from = prop, values_fill = 0.0
   ) %>% 
   select(prop_direct = Direct, prop_indirect = Indirect) %>% 
-  slice(rep(1, each = 3)) %>% 
+  slice(rep(1, each = 9)) %>% 
   mutate(costcenter_clean = c(
     "00000",
+    "10040",
     "30077",
-    "40203"
+    "40203",
+    "40208",
+    "40219",
+    "40229",
+    "40233",
+    "50099"
     )
   ) %>% 
   relocate(costcenter_clean)

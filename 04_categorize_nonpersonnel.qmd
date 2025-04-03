@@ -45,19 +45,52 @@ accounts <-
     glue("{path_working}/Categorization - Account.xlsx")
   ) %>%
   select(!c(account_desc, is_always_direct, is_always_indirect))
+
+cat_po <-
+  read_excel(
+    glue("{path_working}/Categorization - PO.xlsx")
+  ) %>%
+  distinct(po_number, account, cat_po)
 ```
 
 ```{r}
 nonpersonnel_categorized <-
   nonpersonnel %>%
+  left_join(cat_po, by = join_by(po_number, account)) %>% 
   left_join(accounts, by = join_by(account)) %>%
   left_join(props_costcenter, by = join_by(costcenter_clean)) %>% 
   mutate(
-    amt_direct = round(net_accounted * prop_direct, 2),
-    amt_indirect = round(net_accounted * prop_indirect, 2)
-  )
+    amt_nonbudgetary = if_else(is_nonbudgetary == 1, net_accounted, 0, missing = 0),
+    amt_unallowable = if_else(is_unallowable == 1, net_accounted, 0, missing = 0)
+  ) %>%
+  mutate(amt_excluded = case_when(
+    is_nonbudgetary == 1 ~ 0.00,
+    is_unallowable == 1 ~ 0.00,
+    is_po == "TRUE" & cat_po == "Excluded" ~ net_accounted,
+    is_po == "FALSE" & is_excluded == 1 ~ net_accounted,
+    .default = 0.00
+  )) %>% 
+  mutate(amt_direct = case_when(
+    is_po == "TRUE" & cat_po == "Direct" ~ net_accounted,
+    is_po == "TRUE" ~ 0.00,
+    is_po == "FALSE" & is_excluded == 1 ~ 0.00,
+    is_nonbudgetary == 1 ~ 0.00,
+    is_unallowable == 1 ~ 0.00,
+    .default = round(net_accounted * prop_direct, 3)
+  )) %>% 
+  mutate(amt_indirect = case_when(
+    is_po == "TRUE" & cat_po == "Indirect" ~ net_accounted,
+    is_po == "TRUE" ~ 0.00,
+    is_po == "FALSE" & is_excluded == 1 ~ 0.00,
+    is_nonbudgetary == 1 ~ 0.00,
+    is_unallowable == 1 ~ 0.00,
+    .default = round(net_accounted * prop_indirect, 3)
+  ))
 
-nonpersonnel_categorized
+nonpersonnel_categorized %>% 
+  mutate(total = rowSums(.[,65:69])) %>% 
+  # filter(amt_indirect != 0 & amt_direct != 0) %>% 
+  summarize(total = sum(total))
 ```
 
 ```{r}

@@ -124,6 +124,15 @@ r051a_rename <-
 Clean and transform
 
 ```{r}
+
+costcenters_remove <- c(
+  "10041",
+  "10086"
+)
+
+```
+
+```{r}
 services_excluded <- c(
   "7131015",
   "7131024",
@@ -148,6 +157,7 @@ services_excluded <- c(
 r051a_clean <-
   r051a_rename %>%
   filter(agency == "GA0" | (project %in% r209$project)) %>%
+  filter(!(costcenter %in% costcenters_remove)) %>% 
   mutate(across(net_accounted, \(x) round(as.numeric(x), 2))) %>%
   mutate(across(party_name, \(x) str_to_upper(str_squish(x)))) %>%
   mutate(po_number = str_extract(

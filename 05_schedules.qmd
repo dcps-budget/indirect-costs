@@ -32,7 +32,13 @@ ledger <- read_excel("data/ledger.xlsx")
 
 nonpersonnel_categorized <- 
   read_excel("data/nonpersonnel_categorized.xlsx", col_types = "text") %>% 
-  mutate(across(c(net_accounted, amt_direct, amt_indirect), \(x) round(as.numeric(x), 2)))
+  mutate(across(c(
+    net_accounted,
+    amt_excluded,
+    amt_direct,
+    amt_indirect
+  ),
+  \(x) round(as.numeric(x), 2)))
 
 ```
 
@@ -89,8 +95,9 @@ occupancy_total <-
     amt_indirect = sum(amt_indirect)
   ) %>% 
   mutate(account_desc = "OCCUPANCY TOTAL")
-  
-occupancy %>% 
+
+schedule_h <- 
+  occupancy %>% 
   group_by(account_desc) %>% 
   summarize(
     net_accounted = sum(net_accounted),
@@ -99,6 +106,27 @@ occupancy %>%
   ) %>% 
   arrange(desc(net_accounted)) %>% 
   bind_rows(occupancy_total)
+
+schedule_h %>% write_xlsx("schedules/schedule_h.xlsx")
+
+```
+
+Schedule I: Excluded Costs
+
+TODO:
+
+* Missing cost centers
+
+```{r}
+schedule_i <- 
+  nonpersonnel_categorized %>% 
+  filter(amt_excluded != 0.00) %>% 
+  group_by(costcenter_clean, costcenter_name_clean, account, account_desc) %>% 
+  summarize(amt_excluded = round(sum(amt_excluded), 2)) %>% 
+  ungroup() %>% 
+  arrange(costcenter_name_clean, account_desc)
+
+schedule_i %>% write_xlsx("schedules/schedule_i.xlsx")
 
 ```
 
