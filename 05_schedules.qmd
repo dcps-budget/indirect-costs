@@ -30,16 +30,30 @@ Read
 ```{r}
 ledger <- read_excel("data/ledger.xlsx")
 
-nonpersonnel_categorized <- 
-  read_excel("data/nonpersonnel_categorized.xlsx", col_types = "text") %>% 
-  mutate(across(c(
-    net_accounted,
-    amt_excluded,
-    amt_direct,
-    amt_indirect
-  ),
-  \(x) round(as.numeric(x), 2)))
+nonpersonnel_categorized <-
+  read_excel("data/nonpersonnel_categorized.xlsx", col_types = "text") %>%
+  mutate(across(
+    c(
+      net_accounted,
+      amt_nonbudgetary,
+      amt_unallowable,
+      amt_excluded,
+      amt_direct,
+      amt_indirect
+    ),
+    \(x) round(as.numeric(x), 2)
+  ))
 
+personnel_categorized <-
+  read_excel("data/personnel.xlsx", col_types = "text") %>%
+  mutate(across(
+    c(
+      amt_direct,
+      amt_indirect,
+      amt_total
+    ),
+    \(x) round(as.numeric(x), 2)
+  ))
 ```
 
 D.2: Schedule of Fringe Benefits
@@ -83,32 +97,31 @@ schedule_d2 %>% write_xlsx("schedules/schedule_d2.xlsx")
 Schedule H: Occupancy
 
 ```{r}
-occupancy <- 
-  nonpersonnel_categorized %>% 
+occupancy <-
+  nonpersonnel_categorized %>%
   filter(is_split_occupancy == 1)
 
-occupancy_total <- 
-  occupancy %>% 
+occupancy_total <-
+  occupancy %>%
   summarize(
     net_accounted = sum(net_accounted),
     amt_direct = sum(amt_direct),
     amt_indirect = sum(amt_indirect)
-  ) %>% 
+  ) %>%
   mutate(account_desc = "OCCUPANCY TOTAL")
 
-schedule_h <- 
-  occupancy %>% 
-  group_by(account_desc) %>% 
+schedule_h <-
+  occupancy %>%
+  group_by(account_desc) %>%
   summarize(
     net_accounted = sum(net_accounted),
     amt_direct = sum(amt_direct),
     amt_indirect = sum(amt_indirect)
-  ) %>% 
-  arrange(desc(net_accounted)) %>% 
+  ) %>%
+  arrange(desc(net_accounted)) %>%
   bind_rows(occupancy_total)
 
 schedule_h %>% write_xlsx("schedules/schedule_h.xlsx")
-
 ```
 
 Schedule I: Excluded Costs
@@ -118,16 +131,75 @@ TODO:
 * Missing cost centers
 
 ```{r}
-schedule_i <- 
-  nonpersonnel_categorized %>% 
-  filter(amt_excluded != 0.00) %>% 
-  group_by(costcenter_clean, costcenter_name_clean, account, account_desc) %>% 
-  summarize(amt_excluded = round(sum(amt_excluded), 2)) %>% 
-  ungroup() %>% 
+schedule_i <-
+  nonpersonnel_categorized %>%
+  filter(amt_excluded != 0.00) %>%
+  group_by(costcenter_clean, costcenter_name_clean, account, account_desc) %>%
+  summarize(amt_excluded = round(sum(amt_excluded), 2)) %>%
+  ungroup() %>%
   arrange(costcenter_name_clean, account_desc)
 
 schedule_i %>% write_xlsx("schedules/schedule_i.xlsx")
-
 ```
 
+Schedule J: Indirect Costs
 
+* Missing cost centers
+
+```{r}
+schedule_j <-
+  nonpersonnel_categorized %>%
+  filter(amt_indirect != 0.00) %>%
+  group_by(costcenter_clean, costcenter_name_clean, account, account_desc) %>%
+  summarize(amt_indirect = round(sum(amt_indirect), 2)) %>%
+  ungroup() %>%
+  arrange(costcenter_name_clean, account_desc)
+
+schedule_j_unallowable <-
+  nonpersonnel_categorized %>%
+  filter(amt_unallowable != 0.00) %>%
+  group_by(costcenter_clean, costcenter_name_clean, account, account_desc) %>%
+  summarize(amt_unallowable = round(sum(amt_unallowable), 2)) %>%
+  ungroup() %>%
+  arrange(costcenter_name_clean, account_desc)
+
+schedule_j %>% write_xlsx("schedules/schedule_j.xlsx")
+
+schedule_j_unallowable %>% write_xlsx("schedules/schedule_j_unallowable.xlsx")
+```
+
+Schedule A: Total Costs
+
+* Missing cost centers
+
+```{r}
+personnel_by_costcenter <-
+  personnel_categorized %>%
+  group_by(costcenter_clean, costcenter_name_clean) %>%
+  summarize(
+    amt_direct_ps = sum(amt_direct),
+    amt_indirect_ps = sum(amt_indirect),
+    amt_total_ps = sum(amt_total)
+  ) %>%
+  arrange(costcenter_name_clean)
+
+nonpersonnel_by_costcenter <-
+  nonpersonnel_categorized %>%
+  group_by(costcenter_clean, costcenter_name_clean) %>%
+  summarize(
+    amt_nonbudgetary = sum(amt_nonbudgetary),
+    amt_unallowable = sum(amt_unallowable),
+    amt_excluded = sum(amt_excluded),
+    amt_direct_nps = sum(amt_direct),
+    amt_indirect_nps = sum(amt_indirect),
+    amt_budgetary = sum(amt_unallowable + amt_excluded + amt_direct + amt_indirect),
+    amt_unallowable_excluded = sum(amt_unallowable + amt_excluded)
+  ) %>%
+  arrange(costcenter_name_clean)
+
+total_by_costcenter <-
+  personnel_by_costcenter %>%
+  full_join(nonpersonnel_by_costcenter, by = join_by(costcenter_clean))
+
+total_by_costcenter %>% write_xlsx("schedules/total_by_costcenter.xlsx")
+```
