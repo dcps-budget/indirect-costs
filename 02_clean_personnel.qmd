@@ -17,7 +17,7 @@ library(writexl)
 options(scipen = 12, digits = 12)
 ```
 
-Setup
+# Setup
 
 ```{r}
 path_data <- glue(
@@ -41,7 +41,7 @@ fy <- 2024
 dir_485 <- glue("{path_data}/Personnel/485/raw/{fy}")
 ```
 
-Read
+# Import
 
 Functions
 
@@ -169,142 +169,34 @@ data_485_raw <-
   ) %>%
   list_rbind() %>%
   clean_names()
-
-data_485 <- data_485_raw
 ```
 
-Rename
+# Tidy
+
+Add column for personnel account 7013011, which is present in the general ledger 
+but missing from the 485.
 
 ```{r}
-data_485_rename <-
-  data_485 %>%
+data_485_simple <-
+  data_485_raw %>%
   rename(
     costcenter = cost_center,
     costcenter_name = cost_cntr_descr,
     program_name = prog_descr
-  )
-```
-
-Transform
-
-General ledger personnel expenses
-
-```{r}
-d_485_simple <-
-  data_485_rename %>%
-  select(
-    report_agency:offcycle,
-    sort(starts_with("hr_")),
-    sort(starts_with("amt_")),
-    everything()
   ) %>%
   select(
     costcenter, costcenter_name,
     program, program_name,
-    position, emplid, name,
+    position,
+    emplid, name,
     pp_485, group_485, date_485,
     amt_x7011001:amt_x7016001
   ) %>%
-  mutate(across(c(starts_with("amt_")), \(x) (as.numeric(x)))) %>%
-  mutate(amt_x7013011 = 0.00, .after = amt_x7013010)
-
-d_485_simple
-```
-
-```{r}
-d_485_long <-
-  d_485_simple %>%
-  pivot_longer(cols = amt_x7011001:amt_x7016001, names_to = "account", values_to = "amt") %>%
-  mutate(across(account, \(x) str_remove(x, "amt_x")))
-```
-
-```{r}
-n_rows_485 <- nrow(data_485)
-
-ledger_p_by_account <-
-  ledger %>%
-  filter(account_category_desc == "PERSONNEL SERVICES") %>%
-  filter(account != "7012999") %>%
-  group_by(account, account_name) %>%
-  summarize(ending_balance = sum(ending_balance)) %>%
-  filter(ending_balance != 0.00)
-
-ledger_p_by_account %>%
-  pull() %>%
-  sum()
-```
-
-```{r}
-accounts_485 <-
-  d_485_long %>%
-  group_by(account) %>%
-  summarize(amt_485 = sum(amt))
-
-adjustments_by_account <-
-  ledger_p_by_account %>%
-  left_join(accounts_485, by = join_by(account)) %>%
-  filter(account != "7012999") %>%
-  mutate(rec_multiplier = if_else(is.na(amt_485) | amt_485 == 0.00, 1.00, ending_balance / amt_485)) %>%
-  mutate(rec_addon = if_else(is.na(amt_485) | amt_485 == 0.00, ending_balance / n_rows_485, 0.00)) %>%
-  select(account, rec_addon, rec_multiplier)
-
-d_485_corrected_long <-
-  d_485_long %>%
-  right_join(adjustments_by_account, join_by(account)) %>%
-  mutate(amt_corrected = (amt + rec_addon) * rec_multiplier)
-
-d_485_corrected <-
-  d_485_corrected_long %>%
-  mutate(account_col = str_c("amt", account, sep = "_")) %>%
-  group_by(
-    costcenter, costcenter_name, program, program_name, position, emplid, name,
-    pp_485, group_485, date_485,
-    account_col
-  ) %>%
-  summarize(amt_corrected = sum(amt_corrected)) %>%
-  ungroup() %>%
-  pivot_wider(id_cols = c(costcenter:date_485), names_from = account_col, values_from = amt_corrected, names_sort = TRUE)
-
-d_485_corrected
-```
-
-```{r}
-ledger_p_by_account %>%
-  pull() %>%
-  sum()
-
-d_485_corrected_long %>%
-  pull() %>%
-  sum()
-```
-
-```{r}
-data_485_clean <-
-  data_485_rename %>%
-  select(
-    report_agency:offcycle,
-    sort(starts_with("hr_")),
-    sort(starts_with("amt_")),
-    everything()
-  ) %>%
+  mutate(amt_x7013011 = 0.00, .after = amt_x7013010) %>% 
   mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
-  mutate(across(c(name), \(x) str_to_upper(str_squish(x)))) %>%
-  mutate(across(c(starts_with("amt_"), amttot), \(x) (as.numeric(x)))) %>%
-  mutate(
-    amt_nonpersonnel = rowSums(across(c(amt_spc_expense:amt_x3112009, amt_x7131002:amt_x7196007)))
-  ) %>%
-  mutate(
-    amt_pay_base = rowSums(across(starts_with("amt_x7011") | starts_with("amt_x7012"))),
-    amt_pay_additonal = rowSums(across(starts_with("amt_x7013"))),
-    amt_overtime = rowSums(across(starts_with("amt_x7015"))),
-    amt_exception = rowSums(across(starts_with("amt_x7016"))),
-  ) %>%
-  mutate(
-    amt_salary = amt_pay_base + amt_pay_additonal + amt_overtime + amt_exception,
-    amt_benefits = rowSums(across(starts_with("amt_x7014"))),
-    amt_terminal = amt_x7013007
-  ) %>%
-  mutate(amt_total = (amt_nonpersonnel + amt_salary + amt_benefits)) %>%
+  mutate(across(name, \(x) str_to_upper(str_squish(x)))) %>% 
+  mutate(across(starts_with("amt_"), \(x) (as.numeric(x)))) %>%
+  # corrections
   # correction
   mutate(position = if_else(emplid == "87062", "00089440", position)) %>%
   # correction
@@ -332,7 +224,85 @@ data_485_clean <-
   )
 ```
 
+```{r}
+data_485_long <-
+  data_485_simple %>%
+  pivot_longer(
+    cols = amt_x7011001:amt_x7016001, names_to = "account", values_to = "amt"
+  ) %>%
+  mutate(across(account, \(x) str_remove(x, "amt_x")))
+```
 
+```{r}
+n_rows_485 <- data_485_simple %>% nrow()
+
+ledger_p_by_account <-
+  ledger %>%
+  filter(account_category_desc == "PERSONNEL SERVICES") %>%
+  filter(account != "7012999") %>%
+  group_by(account, account_name) %>%
+  summarize(ending_balance = sum(ending_balance)) %>%
+  filter(ending_balance != 0.00)
+```
+
+```{r}
+accounts_485 <-
+  data_485_long %>%
+  group_by(account) %>%
+  summarize(amt_485 = sum(amt))
+
+adjustments_by_account <-
+  ledger_p_by_account %>%
+  left_join(accounts_485, by = join_by(account)) %>%
+  mutate(
+    rec_addon = if_else(
+      is.na(amt_485) | amt_485 == 0.00, ending_balance / n_rows_485, 0.00
+    )
+  ) %>%
+  mutate(
+    rec_multiplier = if_else(
+      is.na(amt_485) | amt_485 == 0.00, 1.00, ending_balance / amt_485
+    )
+  ) %>%
+  select(account, rec_addon, rec_multiplier)
+
+data_485_corrected <-
+  data_485_long %>%
+  right_join(adjustments_by_account, join_by(account)) %>%
+  mutate(amt_corrected = (amt + rec_addon) * rec_multiplier) %>%
+  mutate(account_col = str_c("amt", account, sep = "_")) %>%
+  group_by(
+    costcenter, costcenter_name,
+    program, program_name,
+    position, emplid, name,
+    pp_485, group_485, date_485,
+    account_col
+  ) %>%
+  summarize(amt_corrected = sum(amt_corrected)) %>%
+  ungroup() %>%
+  pivot_wider(
+    id_cols = c(costcenter:date_485),
+    names_from = account_col,
+    values_from = amt_corrected,
+    names_sort = TRUE
+  )
+```
+
+```{r}
+data_485_clean <-
+  data_485_corrected %>%
+  mutate(
+    amt_pay_base = rowSums(across(starts_with("amt_7011") | starts_with("amt_7012"))),
+    amt_pay_additonal = rowSums(across(starts_with("amt_7013"))),
+    amt_overtime = rowSums(across(starts_with("amt_7015"))),
+    amt_exception = rowSums(across(starts_with("amt_7016"))),
+  ) %>%
+  mutate(
+    amt_salary = amt_pay_base + amt_pay_additonal + amt_overtime + amt_exception,
+    amt_benefits = rowSums(across(starts_with("amt_7014"))),
+    amt_terminal = amt_7013007
+  )
+```
 
 ```{r}
 names_clean <-
@@ -352,7 +322,7 @@ costcenters_default <-
   left_join(data_485_clean, by = join_by(emplid)) %>%
   filter(program_name != "PAYROLL DEFAULT") %>%
   group_by(emplid, costcenter, costcenter_name, program, program_name) %>%
-  summarize(amt_total = sum(amt_total)) %>%
+  summarize(amt_total = sum(amt_salary + amt_benefits)) %>%
   group_by(emplid) %>%
   slice_max(order_by = amt_total, n = 1) %>%
   ungroup() %>%
@@ -363,6 +333,7 @@ costcenters_default <-
   ) %>%
   mutate(is_default = TRUE)
 ```
+
 Augment
 
 ```{r}
@@ -441,7 +412,7 @@ personnel <-
   arrange(costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean) %>%
   relocate(c(costcenter_clean, costcenter, program_2, program, position, emplid), .after = last_col())
 
-personnel %>% write_xlsx("data/personnel.xlsx")
+personnel %>% write_csv("data/csv/personnel.csv", na = "")
 ```
 
 ```{r}
