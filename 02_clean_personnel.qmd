@@ -6,11 +6,6 @@ format: html
 TODO:
 
 * Payroll default records
-* True up to GL
-
-Depends on:
-
-* clean_r023
 
 ```{r}
 library(tidyverse)
@@ -44,8 +39,6 @@ path_working <- glue(
 fy <- 2024
 
 dir_485 <- glue("{path_data}/Personnel/485/raw/{fy}")
-
-total_r023 <- 1359378538.29
 ```
 
 Read
@@ -67,6 +60,15 @@ read_485 <- function(file_485, dir_485) {
       group_485 = group_485
     )
 }
+```
+
+Ledger
+
+```{r}
+ledger <- read_csv(
+  "data/csv/ledger.csv",
+  col_types = cols(ending_balance = col_double(), .default = col_character())
+)
 ```
 
 Lookup tables
@@ -188,13 +190,92 @@ Transform
 General ledger personnel expenses
 
 ```{r}
-# total_485 <-
-#   data_485 %>%
-#   pull(amttot) %>%
-#   as.numeric() %>%
-#   sum()
-#
-# ratio_r023 <- total_r023 / total_485
+d_485_simple <-
+  data_485_rename %>%
+  select(
+    report_agency:offcycle,
+    sort(starts_with("hr_")),
+    sort(starts_with("amt_")),
+    everything()
+  ) %>%
+  select(
+    costcenter, costcenter_name,
+    program, program_name,
+    position, emplid, name,
+    pp_485, group_485, date_485,
+    amt_x7011001:amt_x7016001
+  ) %>%
+  mutate(across(c(starts_with("amt_")), \(x) (as.numeric(x)))) %>%
+  mutate(amt_x7013011 = 0.00, .after = amt_x7013010)
+
+d_485_simple
+```
+
+```{r}
+d_485_long <-
+  d_485_simple %>%
+  pivot_longer(cols = amt_x7011001:amt_x7016001, names_to = "account", values_to = "amt") %>%
+  mutate(across(account, \(x) str_remove(x, "amt_x")))
+```
+
+```{r}
+n_rows_485 <- nrow(data_485)
+
+ledger_p_by_account <-
+  ledger %>%
+  filter(account_category_desc == "PERSONNEL SERVICES") %>%
+  filter(account != "7012999") %>%
+  group_by(account, account_name) %>%
+  summarize(ending_balance = sum(ending_balance)) %>%
+  filter(ending_balance != 0.00)
+
+ledger_p_by_account %>%
+  pull() %>%
+  sum()
+```
+
+```{r}
+accounts_485 <-
+  d_485_long %>%
+  group_by(account) %>%
+  summarize(amt_485 = sum(amt))
+
+adjustments_by_account <-
+  ledger_p_by_account %>%
+  left_join(accounts_485, by = join_by(account)) %>%
+  filter(account != "7012999") %>%
+  mutate(rec_multiplier = if_else(is.na(amt_485) | amt_485 == 0.00, 1.00, ending_balance / amt_485)) %>%
+  mutate(rec_addon = if_else(is.na(amt_485) | amt_485 == 0.00, ending_balance / n_rows_485, 0.00)) %>%
+  select(account, rec_addon, rec_multiplier)
+
+d_485_corrected_long <-
+  d_485_long %>%
+  right_join(adjustments_by_account, join_by(account)) %>%
+  mutate(amt_corrected = (amt + rec_addon) * rec_multiplier)
+
+d_485_corrected <-
+  d_485_corrected_long %>%
+  mutate(account_col = str_c("amt", account, sep = "_")) %>%
+  group_by(
+    costcenter, costcenter_name, program, program_name, position, emplid, name,
+    pp_485, group_485, date_485,
+    account_col
+  ) %>%
+  summarize(amt_corrected = sum(amt_corrected)) %>%
+  ungroup() %>%
+  pivot_wider(id_cols = c(costcenter:date_485), names_from = account_col, values_from = amt_corrected, names_sort = TRUE)
+
+d_485_corrected
+```
+
+```{r}
+ledger_p_by_account %>%
+  pull() %>%
+  sum()
+
+d_485_corrected_long %>%
+  pull() %>%
+  sum()
 ```
 
 ```{r}
@@ -251,6 +332,8 @@ data_485_clean <-
   )
 ```
 
+
+
 ```{r}
 names_clean <-
   data_485_clean %>%
@@ -280,7 +363,6 @@ costcenters_default <-
   ) %>%
   mutate(is_default = TRUE)
 ```
-
 Augment
 
 ```{r}
@@ -324,11 +406,6 @@ data_485_aug <-
   mutate(
     costcenter_clean = if_else(costcenter_name_clean == "SCHOOLS", "SCHOOLS", costcenter, missing = costcenter),
     costcenter_name_clean = if_else(!is.na(costcenter_name_clean), costcenter_name_clean, costcenter_name, , missing = costcenter_name)
-  ) %>%
-  mutate(
-    costcenter_name_clean = if_else(program_name == "PAYROLL DEFAULT", "ZZZ - PAYROLL DEFAULT", costcenter_name_clean),
-    costcenter_name = if_else(program_name == "PAYROLL DEFAULT", "ZZZ - PAYROLL DEFAULT", costcenter_name),
-    program_2_name = if_else(program_name == "PAYROLL DEFAULT", "ZZZ - PAYROLL DEFAULT", program_2_name),
   )
 ```
 
@@ -368,18 +445,17 @@ personnel %>% write_xlsx("data/personnel.xlsx")
 ```
 
 ```{r}
-
-props_missing <- 
-  personnel %>% 
-  filter(costcenter_clean != "SCHOOLS") %>% 
-  count(categorization) %>% 
-  mutate(prop = n / sum(n)) %>% 
-  select(!n) %>% 
+props_missing <-
+  personnel %>%
+  filter(costcenter_clean != "SCHOOLS") %>%
+  count(categorization) %>%
+  mutate(prop = n / sum(n)) %>%
+  select(!n) %>%
   pivot_wider(
     names_from = categorization, values_from = prop, values_fill = 0.0
-  ) %>% 
-  select(prop_direct = Direct, prop_indirect = Indirect) %>% 
-  slice(rep(1, each = 9)) %>% 
+  ) %>%
+  select(prop_direct = Direct, prop_indirect = Indirect) %>%
+  slice(rep(1, each = 9)) %>%
   mutate(costcenter_clean = c(
     "00000",
     "10040",
@@ -390,25 +466,23 @@ props_missing <-
     "40229",
     "40233",
     "50099"
-    )
-  ) %>% 
+  )) %>%
   relocate(costcenter_clean)
 
 props_missing
-
 ```
 
 ```{r}
-props_costcenter <- 
-  personnel %>% 
-  count(costcenter_clean, categorization) %>% 
-  group_by(costcenter_clean) %>% 
-  mutate(prop = n / sum(n)) %>% 
-  select(!n) %>% 
+props_costcenter <-
+  personnel %>%
+  count(costcenter_clean, categorization) %>%
+  group_by(costcenter_clean) %>%
+  mutate(prop = n / sum(n)) %>%
+  select(!n) %>%
   pivot_wider(
     id_cols = costcenter_clean, names_from = categorization, values_from = prop, values_fill = 0.0
-  ) %>% 
-  select(costcenter_clean, prop_direct = Direct, prop_indirect = Indirect) %>% 
+  ) %>%
+  select(costcenter_clean, prop_direct = Direct, prop_indirect = Indirect) %>%
   bind_rows(props_missing)
 
 props_costcenter %>% write_xlsx("data/props_costcenter.xlsx")

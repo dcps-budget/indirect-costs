@@ -24,6 +24,14 @@ path_data <- glue(
   .sep = "/"
 )
 
+path_working <- glue(
+  "C:/Users",
+  "{Sys.getenv('USERNAME')}",
+  "OneDrive - District of Columbia Public Schools",
+  "Working Files - Indirect Cost",
+  .sep = "/"
+)
+
 fy <- "2024"
 
 path_r209 <-
@@ -34,6 +42,23 @@ path_r023_ga0 <-
 
 path_r023_gd0 <-
   glue("{path_data}/General Ledger/R023/raw/{fy}/r023_expense_GD0_{fy}.xls")
+```
+
+Cost center names
+
+```{r}
+costcenters <-
+  read_excel(
+    glue(
+      "{path_working}/Categorization by Cost Center, Program 2, Program.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  mutate(costcenter_clean = if_else(
+    !is.na(costcenter_name_clean), costcenter_name_clean, costcenter
+  )) %>%
+  distinct(costcenter, costcenter_clean)
 ```
 
 Read R209
@@ -68,8 +93,14 @@ Rename
 r023_rename <-
   r023 %>%
   rename(
-    fund_number  = fund_detail,
-    award_number = award
+    fund_number = fund_detail,
+    award_number = award,
+    costcenter = cost_center,
+    costcenter_name = cost_center_desc,
+    program = program,
+    program_name = program_desc,
+    account = account,
+    account_name = account_desc
   )
 ```
 
@@ -78,7 +109,16 @@ Clean and transform
 ```{r}
 r023_clean <-
   r023_rename %>%
-  mutate(across(ending_balance, \(x) round(as.numeric(x), 2))) %>%
+  filter(agency == "GA0" | (project %in% r209$project)) %>%
+  left_join(costcenters, by = join_by(costcenter)) %>%
+  mutate(
+    costcenter_clean = if_else(
+      is.na(costcenter_clean), costcenter, costcenter_clean
+    ),
+    costcenter_name_clean = if_else(
+      costcenter_clean == "SCHOOLS", "SCHOOLS", costcenter_name
+    )
+  ) %>%
   mutate(
     is_osse = (agency == "GD0"),
     is_nonbudgetary = (award_number == "9999998"),
@@ -86,7 +126,7 @@ r023_clean <-
     is_capital = (appropriation_fund == "3030"),
     is_medicaid = (fund_number == "4020999" & award_number == "2000276")
   ) %>%
-  filter(agency == "GA0" | (project %in% r209$project))
+  mutate(across(ending_balance, \(x) round(as.numeric(x), 2)))
 ```
 
 ```{r}
@@ -135,5 +175,9 @@ r023_clean %>%
 ```
 
 ```{r}
-r023_clean %>% write_xlsx("data/ledger.xlsx")
+r023_clean %>% write_csv("data/csv/ledger.csv", na = "")
+```
+
+```{r}
+Sys.time()
 ```
