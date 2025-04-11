@@ -13,7 +13,7 @@ library(writexl)
 options(scipen = 12, digits = 12)
 ```
 
-Setup
+# Setup
 
 ```{r}
 path_data <- glue(
@@ -44,34 +44,17 @@ path_r023_gd0 <-
   glue("{path_data}/General Ledger/R023/raw/{fy}/r023_expense_GD0_{fy}.xls")
 ```
 
-Cost center names
+# Import
+
+R209
 
 ```{r}
-costcenters <-
-  read_excel(
-    glue(
-      "{path_working}/Categorization by Cost Center, Program 2, Program.xlsx"
-    ),
-    col_types = "text"
-  ) %>%
-  clean_names() %>%
-  mutate(costcenter_clean = if_else(
-    !is.na(costcenter_name_clean), costcenter_name_clean, costcenter
-  )) %>%
-  distinct(costcenter, costcenter_clean)
-```
-
-Read R209
-
-```{r}
-r209_raw <-
+r209 <-
   read_excel(path_r209, col_types = "text", range = "A17:AG5216") %>%
   clean_names()
-
-r209 <- r209_raw
 ```
 
-Read R023
+R023
 
 ```{r}
 r023_ga0 <-
@@ -83,18 +66,14 @@ r023_gd0 <-
   clean_names()
 
 r023_raw <- bind_rows(r023_ga0, r023_gd0)
-
-r023 <- r023_raw
 ```
 
-Rename
+# Tidy
 
 ```{r}
 r023_rename <-
-  r023 %>%
+  r023_raw %>%
   rename(
-    fund_number = fund_detail,
-    award_number = award,
     costcenter = cost_center,
     costcenter_name = cost_center_desc,
     program = program,
@@ -104,29 +83,34 @@ r023_rename <-
   )
 ```
 
-Clean and transform
-
 ```{r}
 r023_clean <-
   r023_rename %>%
-  filter(agency == "GA0" | (project %in% r209$project)) %>%
-  left_join(costcenters, by = join_by(costcenter)) %>%
-  mutate(
-    costcenter_clean = if_else(
-      is.na(costcenter_clean), costcenter, costcenter_clean
-    ),
-    costcenter_name_clean = if_else(
-      costcenter_clean == "SCHOOLS", "SCHOOLS", costcenter_name
-    )
+  filter(
+    agency == "GA0" | ((project %in% r209$project) & project != "401750")
   ) %>%
   mutate(
     is_osse = (agency == "GD0"),
-    is_nonbudgetary = (award_number == "9999998"),
-    is_summeradvance = (fund_number %in% c("1010171", "1010173")),
+    is_nonbudgetary = (award == "9999998"),
+    is_summeradvance = (fund_detail %in% c("1010171", "1010173")),
     is_capital = (appropriation_fund == "3030"),
-    is_medicaid = (fund_number == "4020999" & award_number == "2000276")
+    is_medicaid = (fund_detail == "4020999" & fund_detail == "2000276")
   ) %>%
-  mutate(across(ending_balance, \(x) round(as.numeric(x), 2)))
+  mutate(across(ending_balance, \(x) as.numeric(x)))
+```
+
+```{r}
+r023_clean %>% write_csv("data/csv/ledger.csv", na = "")
+```
+
+# Diagnostic
+
+Budgetary basis expenditures from ACFR (thousands): 1244373
+
+```{r}
+r023_clean %>%
+  filter(!is_osse, !is_nonbudgetary, !is_summeradvance, !is_capital) %>%
+  summarize(ending_balance = sum(ending_balance) %/% 1000)
 ```
 
 ```{r}
@@ -149,7 +133,9 @@ capital <-
   r023_clean %>%
   filter(is_capital) %>%
   summarize(ending_balance = sum(ending_balance))
+```
 
+```{r}
 r023_clean %>%
   summarize(ending_balance = sum(ending_balance)) %>%
   bind_rows(
@@ -158,24 +144,6 @@ r023_clean %>%
     summeradvance,
     capital
   )
-```
-
-Budgetary basis expenditures from ACFR (thousands): 1244373
-
-```{r}
-r023_clean %>%
-  filter(!is_osse, !is_nonbudgetary, !is_summeradvance, !is_capital) %>%
-  summarize(ending_balance = sum(ending_balance) %/% 1000)
-```
-
-```{r}
-r023_clean %>%
-  group_by(account_category_desc) %>%
-  summarize(ending_balance = sum(ending_balance))
-```
-
-```{r}
-r023_clean %>% write_csv("data/csv/ledger.csv", na = "")
 ```
 
 ```{r}

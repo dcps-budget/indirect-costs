@@ -35,8 +35,8 @@ path_working <- glue(
 
 ```{r}
 nonpersonnel <- 
-  read_excel("data/nonpersonnel.xlsx", col_types = "text") %>% 
-  mutate(across(net_accounted, \(x) round(as.numeric(x), 2)))
+  read_csv("data/csv/nonpersonnel.csv", col_types = cols(.default = col_character())) %>% 
+  mutate(across(net_accounted, \(x) as.numeric(x)))
 
 props_costcenter <- read_excel("data/props_costcenter.xlsx")
 
@@ -76,7 +76,7 @@ nonpersonnel_categorized <-
     is_po == "FALSE" & is_excluded == 1 ~ 0.00,
     is_nonbudgetary == 1 ~ 0.00,
     is_unallowable == 1 ~ 0.00,
-    .default = round(net_accounted * prop_direct, 3)
+    .default = net_accounted * prop_direct
   )) %>% 
   mutate(amt_indirect = case_when(
     is_po == "TRUE" & cat_po == "Indirect" ~ net_accounted,
@@ -84,7 +84,7 @@ nonpersonnel_categorized <-
     is_po == "FALSE" & is_excluded == 1 ~ 0.00,
     is_nonbudgetary == 1 ~ 0.00,
     is_unallowable == 1 ~ 0.00,
-    .default = round(net_accounted * prop_indirect, 3)
+    .default = net_accounted * prop_indirect
   ))
 
 nonpersonnel_categorized %>% 

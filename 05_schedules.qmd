@@ -28,7 +28,21 @@ path_data <- glue(
 Read
 
 ```{r}
-ledger <- read_excel("data/ledger.xlsx")
+ledger <- read_csv(
+  "data/csv/ledger.csv",
+  col_types = cols(ending_balance = col_double(), .default = col_character())
+)
+
+personnel_categorized <-
+  read_csv(
+    "data/csv/personnel.csv",
+    col_types = cols(
+      amt_direct = col_double(),
+      amt_indirect = col_double(),
+      amt_total = col_double(),
+      .default = col_character()
+    )
+  )
 
 nonpersonnel_categorized <-
   read_excel("data/nonpersonnel_categorized.xlsx", col_types = "text") %>%
@@ -43,47 +57,36 @@ nonpersonnel_categorized <-
     ),
     \(x) round(as.numeric(x), 2)
   ))
-
-personnel_categorized <-
-  read_excel("data/personnel.xlsx", col_types = "text") %>%
-  mutate(across(
-    c(
-      amt_direct,
-      amt_indirect,
-      amt_total
-    ),
-    \(x) round(as.numeric(x), 2)
-  ))
 ```
 
 D.2: Schedule of Fringe Benefits
 
 ```{r}
 fringe_other <- c(
+  "DC METRO BENEFITS",
   "MISC FRINGE BENEFITS",
   "RETIREMENT CONTRIBUTION - CIVIL SERVICE",
   "RETIREMENT CONTRIBUTION - TEACHERS",
-  "UNEMPLOYMENT INSURANCE",
-  "DC METRO BENEFITS"
+  "UNEMPLOYMENT INSURANCE"
 )
 
 fringe <-
   ledger %>%
   filter(account_class_desc == "FRINGE BENEFITS - CURR PERSONNEL") %>%
   mutate(
-    account_desc = if_else(
-      account_desc %in% fringe_other, "OTHER", account_desc
+    account_name = if_else(
+      account_name %in% fringe_other, "OTHER", account_name
     )
   ) %>%
-  group_by(account_desc) %>%
+  group_by(account_name) %>%
   summarize(ending_balance = sum(ending_balance)) %>%
-  mutate(is_other = account_desc == "OTHER") %>%
+  mutate(is_other = account_name == "OTHER") %>%
   arrange(is_other, desc(ending_balance))
 
 fringe_total <-
   fringe %>%
   summarize(ending_balance = sum(ending_balance)) %>%
-  mutate(account_desc = "TOTAL", .before = 0)
+  mutate(account_name = "TOTAL", .before = 0)
 
 schedule_d2 <-
   fringe %>%

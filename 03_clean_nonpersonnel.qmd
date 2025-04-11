@@ -156,9 +156,11 @@ services_excluded <- c(
 ```{r}
 r051a_clean <-
   r051a_rename %>%
-  filter(agency == "GA0" | (project %in% r209$project)) %>%
+  filter(
+    agency == "GA0" | ((project %in% r209$project) & project != "401750")
+  ) %>%
   filter(!(costcenter %in% costcenters_remove)) %>% 
-  mutate(across(net_accounted, \(x) round(as.numeric(x), 2))) %>%
+  mutate(across(net_accounted, \(x) as.numeric(x))) %>%
   mutate(across(party_name, \(x) str_to_upper(str_squish(x)))) %>%
   mutate(po_number = str_extract(
     transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
@@ -183,7 +185,7 @@ r051a_aug <-
 ```
 
 ```{r}
-r051a_aug %>% write_xlsx("data/nonpersonnel.xlsx")
+r051a_aug %>% write_csv("data/csv/nonpersonnel.csv", na = "")
 ```
 
 ```{r}
