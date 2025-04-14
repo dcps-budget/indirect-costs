@@ -13,7 +13,7 @@ library(writexl)
 options(scipen = 12, digits = 12)
 ```
 
-Setup
+# Setup
 
 ```{r}
 path_data <- glue(
@@ -36,40 +36,27 @@ fy <- "2024"
 
 dir_r051a <- glue("{path_data}/Journal Entries/R051A/raw/{fy}")
 
-path_r209 <-
-  glue("{path_data}/Budget/R209/raw/{fy}/r209_GD0_GA0_{fy}.xlsx")
-
 path_r051a_ga0 <-
   glue("{dir_r051a}/r051a_expense_71_GA0_{fy}.xlsx")
 
 path_r051a_gd0 <-
   glue("{dir_r051a}/r051a_expense_71_GD0_{fy}.xlsx")
+
+path_r209 <-
+  glue("{path_data}/Budget/R209/raw/{fy}/r209_GD0_GA0_{fy}.xlsx")
 ```
+
+# Import
 
 ```{r}
 costcenters <-
-  read_excel(
-    glue(
-      "{path_working}/Categorization by Cost Center, Program 2, Program.xlsx"
-    ),
-    col_types = "text"
-  ) %>%
+  read_excel(glue("{path_working}/Cost Centers.xlsx"), col_types = "text") %>%
   clean_names() %>%
-  mutate(
-    costcenter_clean = if_else(
-      !is.na(costcenter_name_clean), costcenter_name_clean, costcenter
-    ),
-    costcenter_name_clean = if_else(
-      !is.na(costcenter_name_clean), costcenter_name_clean, costcenter_name
-    )
-  ) %>%
-  distinct(costcenter, costcenter_clean, costcenter_name_clean)
+  select(!costcenter_name)
 
-categorizations_previous <-
+pos_cat_prev <-
   read_excel(
-    glue(
-      "{path_working}/Previous Categorization - PO.xlsx"
-    ),
+    glue("{path_working}/Previous Categorization - PO.xlsx"),
     col_types = "text"
   ) %>%
   clean_names() %>%
@@ -77,27 +64,17 @@ categorizations_previous <-
   distinct(po_number, po_categorization_previous)
 ```
 
-Read in lookup information
-
 ```{r}
-pos <- read_excel("data/pos.xlsx")
-
 programs <- read_excel("data/programs.xlsx")
+
+pos <- read_excel("data/pos.xlsx")
 ```
 
-Read R209
-
 ```{r}
-r209_raw <-
+r209 <-
   read_excel(path_r209, col_types = "text", range = "A17:AG5216") %>%
   clean_names()
 
-r209 <- r209_raw
-```
-
-Read R051A
-
-```{r}
 r051a_ga0 <-
   read_excel(path_r051a_ga0, col_types = "text", range = "A12:AT66121") %>%
   clean_names()
@@ -106,50 +83,47 @@ r051a_gd0 <-
   read_excel(path_r051a_gd0, col_types = "text", range = "A12:AT69603") %>%
   clean_names()
 
-r051a_raw <- bind_rows(r051a_ga0, r051a_gd0)
-
-r051a <- r051a_raw
+r051a <- bind_rows(r051a_ga0, r051a_gd0)
 ```
 
-Rename
+# Tidy
 
 ```{r}
 r051a_rename <-
   r051a %>%
   rename(
-    costcenter = cost_center
+    costcenter_name = cost_center_desc, costcenter = cost_center,
+    program_name = program_desc, program = program,
+    account_name = account_desc, account = account
   )
 ```
 
-Clean and transform
-
 ```{r}
-
 costcenters_remove <- c(
   "10041",
-  "10086"
+  "10086",
+  "30077"
 )
-
 ```
 
 ```{r}
 services_excluded <- c(
-  "7131015",
-  "7131024",
-  "7131045",
-  "7132004",
-  "7131019",
-  "7131016",
-  "7131006",
-  "7131007",
-  "7131033",
-  "7131025",
-  "7131017",
-  "7131012",
-  "7131014",
   "7131002",
   "7131003",
-  "7131020"
+  "7131006",
+  "7131007",
+  "7131012",
+  "7131014",
+  "7131015",
+  "7131016",
+  "7131017",
+  "7131019",
+  "7131020",
+  "7131024",
+  "7131025",
+  "7131033",
+  "7131045",
+  "7132004"
 )
 ```
 
@@ -159,54 +133,64 @@ r051a_clean <-
   filter(
     agency == "GA0" | ((project %in% r209$project) & project != "401750")
   ) %>%
-  filter(!(costcenter %in% costcenters_remove)) %>% 
+  filter(!(costcenter %in% costcenters_remove)) %>%
   mutate(across(net_accounted, \(x) as.numeric(x))) %>%
-  mutate(across(party_name, \(x) str_to_upper(str_squish(x)))) %>%
   mutate(po_number = str_extract(
     transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
   )) %>%
   mutate(is_po = !is.na(po_number)) %>%
-  mutate(is_service = str_detect(account_parent_1, "^713[12]") & !(account %in% services_excluded))
+  mutate(
+    is_service =
+      str_detect(account_parent_1, "^713[12]") &
+        !(account %in% services_excluded)
+  )
 ```
 
-Join programs
+# Transform
 
 ```{r}
 r051a_aug <-
   r051a_clean %>%
   left_join(costcenters, by = join_by(costcenter)) %>%
   left_join(programs, by = join_by(program)) %>%
-  left_join(categorizations_previous, by = join_by(po_number)) %>%
-  left_join(pos, by = join_by(po_number)) %>% 
+  left_join(pos, by = join_by(po_number)) %>%
+  left_join(pos_cat_prev, by = join_by(po_number)) %>%
   mutate(costcenter_clean = case_when(
     is.na(costcenter_clean) ~ costcenter,
     .default = costcenter_clean
-  ))
+  )) %>%
+  mutate(costcenter_name_clean = case_when(
+    is.na(costcenter_name_clean) ~ costcenter_name,
+    .default = costcenter_name_clean
+  )) %>%
+  select(
+    costcenter_name_clean, costcenter_clean,
+    program_2_name, program_2, program_name, program,
+    account_name, account,
+    net_accounted,
+    party_name, is_service, is_po,
+    po_number, po_title, po_line_item_description,
+    po_categorization_previous
+  )
 ```
 
 ```{r}
 r051a_aug %>% write_csv("data/csv/nonpersonnel.csv", na = "")
 ```
 
+Write out PO's for review
+
 ```{r}
-pos_r051a <-
-  r051a_aug %>%
-  filter(is_po) %>%
-  distinct(
-    po_categorization_previous,
-    is_service, party_name, account_desc,
-    po_title, po_line_item_description,
-    costcenter_name_clean,
-    account, costcenter_clean, po_number
-  ) %>%
-  arrange(
-    desc(is_service), party_name, account_desc,
-    po_title, po_line_item_description,
-    costcenter_name_clean,
-    account, costcenter_clean, po_number
-  )
+```
 
-pos_r051a %>% write_xlsx("data/pos_r051a.xlsx")
+# Diagnostics
 
-pos_r051a
+```{r}
+r051a_aug %>%
+  group_by(costcenter_name_clean, costcenter_clean) %>%
+  summarize(net_accounted = sum(net_accounted), .groups = "drop")
+```
+
+```{r}
+Sys.time()
 ```
