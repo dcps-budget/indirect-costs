@@ -192,9 +192,9 @@ data_485_simple <-
     pp_485, group_485, date_485,
     amt_x7011001:amt_x7016001
   ) %>%
-  mutate(amt_x7013011 = 0.00, .after = amt_x7013010) %>% 
+  mutate(amt_x7013011 = 0.00, .after = amt_x7013010) %>%
   mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
-  mutate(across(name, \(x) str_to_upper(str_squish(x)))) %>% 
+  mutate(across(name, \(x) str_to_upper(str_squish(x)))) %>%
   mutate(across(starts_with("amt_"), \(x) (as.numeric(x)))) %>%
   # corrections
   # correction
@@ -402,7 +402,8 @@ personnel <-
   mutate(
     amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
     amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
-    amt_total = amt_salary + amt_benefits,
+    amt_total = amt_direct + amt_indirect,
+    amt_unrestricted = if_else(headcomponent == "Non-executive", amt_salary + amt_benefits, 0.00),
     amt_headcomponent_direct = if_else(headcomponent != "Non-executive" & categorization == "Direct", amt_total, 0),
     amt_headcomponent_indirect = if_else(headcomponent != "Non-executive" & categorization == "Indirect", amt_total, 0),
     amt_headcomponent_total = if_else(headcomponent != "Non-executive", amt_total, 0),
@@ -413,74 +414,6 @@ personnel <-
   relocate(c(costcenter_clean, costcenter, program_2, program, position, emplid), .after = last_col())
 
 personnel %>% write_csv("data/csv/personnel.csv", na = "")
-```
-
-```{r}
-props_missing <-
-  personnel %>%
-  filter(costcenter_clean != "SCHOOLS") %>%
-  count(categorization) %>%
-  mutate(prop = n / sum(n)) %>%
-  select(!n) %>%
-  pivot_wider(
-    names_from = categorization, values_from = prop, values_fill = 0.0
-  ) %>%
-  select(prop_direct = Direct, prop_indirect = Indirect) %>%
-  slice(rep(1, each = 9)) %>%
-  mutate(costcenter_clean = c(
-    "00000",
-    "10040",
-    "30077",
-    "40203",
-    "40208",
-    "40219",
-    "40229",
-    "40233",
-    "50099"
-  )) %>%
-  relocate(costcenter_clean)
-
-props_missing
-```
-
-```{r}
-props_costcenter <-
-  personnel %>%
-  count(costcenter_clean, categorization) %>%
-  group_by(costcenter_clean) %>%
-  mutate(prop = n / sum(n)) %>%
-  select(!n) %>%
-  pivot_wider(
-    id_cols = costcenter_clean, names_from = categorization, values_from = prop, values_fill = 0.0
-  ) %>%
-  select(costcenter_clean, prop_direct = Direct, prop_indirect = Indirect) %>%
-  bind_rows(props_missing)
-
-props_costcenter %>% write_xlsx("data/props_costcenter.xlsx")
-```
-
-D.1
-
-```{r}
-schedule_d1 <-
-  personnel %>%
-  select(!starts_with("amt_terminal"))
-
-schedule_d1 %>% write_xlsx("schedules/schedule_d1.xlsx")
-```
-
-E
-
-```{r}
-schedule_e <-
-  personnel %>%
-  select(!c(
-    amt_salary, amt_benefits,
-    amt_direct, amt_indirect, amt_total,
-    amt_headcomponent_direct, amt_headcomponent_indirect, amt_headcomponent_total
-  ))
-
-schedule_e %>% write_xlsx("schedules/schedule_e.xlsx")
 ```
 
 Validations

@@ -13,7 +13,7 @@ library(writexl)
 options(scipen = 12, digits = 12)
 ```
 
-Setup
+# Setup
 
 ```{r}
 path_data <- glue(
@@ -33,12 +33,21 @@ path_working <- glue(
 )
 ```
 
-```{r}
-nonpersonnel <- 
-  read_csv("data/csv/nonpersonnel.csv", col_types = cols(.default = col_character())) %>% 
-  mutate(across(net_accounted, \(x) as.numeric(x)))
+# Import
 
-props_costcenter <- read_excel("data/props_costcenter.xlsx")
+```{r}
+nonpersonnel <-
+  read_csv(
+    "data/csv/nonpersonnel.csv",
+    col_types = cols(net_accounted = col_double(), .default = col_character())
+  )
+
+personnel <-
+  read_csv(
+    "data/csv/personnel.csv",
+    col_types = "c",
+    col_select = c(costcenter_clean, categorization)
+  )
 
 accounts <-
   read_excel(
@@ -53,12 +62,52 @@ cat_po <-
   distinct(po_number, account, cat_po)
 ```
 
+# Personnel proportions by cost center
+
 ```{r}
-nonpersonnel_categorized <-
+costcenters_missing <-
+  tribble(
+    ~costcenter_clean, ~categorization,
+    "10040", "Indirect", # budget division, education cluster,
+    "40208", "Direct", # enrollment and residency
+    "40219", "Direct", # child care subsidy program,
+    "40229", "Direct", # nutrition programs
+    "40233", "Direct", # special education
+  )
+```
+
+```{r}
+props_costcenter <-
+  personnel %>%
+  bind_rows(costcenters_missing) %>%
+  count(costcenter_clean, categorization) %>%
+  group_by(costcenter_clean) %>%
+  mutate(prop = n / sum(n)) %>%
+  select(!n) %>%
+  pivot_wider(
+    id_cols = costcenter_clean,
+    names_from = categorization,
+    values_from = prop,
+    values_fill = 0.0
+  ) %>%
+  select(costcenter_clean, prop_direct = Direct, prop_indirect = Indirect)
+```
+
+#
+
+```{r}
+nonpersonnel_cat <-
   nonpersonnel %>%
-  left_join(cat_po, by = join_by(po_number, account)) %>% 
+  left_join(cat_po, by = join_by(po_number, account)) %>%
   left_join(accounts, by = join_by(account)) %>%
-  left_join(props_costcenter, by = join_by(costcenter_clean)) %>% 
+  left_join(props_costcenter, by = join_by(costcenter_clean)) %>%
+  # cleanup
+  mutate(
+    is_excluded = if_else(
+      costcenter_name_clean == "CONSTRUCTION DIVISION", 1, is_excluded
+    )
+  ) %>%
+  #
   mutate(
     amt_nonbudgetary = if_else(is_nonbudgetary == 1, net_accounted, 0, missing = 0),
     amt_unallowable = if_else(is_unallowable == 1, net_accounted, 0, missing = 0)
@@ -69,7 +118,7 @@ nonpersonnel_categorized <-
     is_po == "TRUE" & cat_po == "Excluded" ~ net_accounted,
     is_po == "FALSE" & is_excluded == 1 ~ net_accounted,
     .default = 0.00
-  )) %>% 
+  )) %>%
   mutate(amt_direct = case_when(
     is_po == "TRUE" & cat_po == "Direct" ~ net_accounted,
     is_po == "TRUE" ~ 0.00,
@@ -77,7 +126,7 @@ nonpersonnel_categorized <-
     is_nonbudgetary == 1 ~ 0.00,
     is_unallowable == 1 ~ 0.00,
     .default = net_accounted * prop_direct
-  )) %>% 
+  )) %>%
   mutate(amt_indirect = case_when(
     is_po == "TRUE" & cat_po == "Indirect" ~ net_accounted,
     is_po == "TRUE" ~ 0.00,
@@ -85,14 +134,31 @@ nonpersonnel_categorized <-
     is_nonbudgetary == 1 ~ 0.00,
     is_unallowable == 1 ~ 0.00,
     .default = net_accounted * prop_indirect
-  ))
-
-nonpersonnel_categorized %>% 
-  mutate(total = rowSums(.[,65:69])) %>% 
-  # filter(amt_indirect != 0 & amt_direct != 0) %>% 
-  summarize(total = sum(total))
+  )) %>%
+  mutate(
+    amt_total = amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct + amt_indirect
+  ) %>%
+  filter(!is.na(amt_total))
 ```
 
 ```{r}
-nonpersonnel_categorized %>% write_xlsx("data/nonpersonnel_categorized.xlsx")
+nonpersonnel_cat %>% write_csv("data/csv/nonpersonnel_cat.csv", na = "")
+```
+
+# Diagnostics
+
+```{r}
+nonpersonnel_cat %>%
+  pull(amt_total) %>%
+  sum()
+```
+
+```{r}
+nonpersonnel_cat %>%
+  filter(is.na(amt_total)) %>%
+  group_by(costcenter_clean, costcenter_name_clean, account_name) %>%
+  summarize(
+    net_accounted = sum(net_accounted), n_transactions = n(),
+    .groups = "drop"
+  )
 ```
