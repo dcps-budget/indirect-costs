@@ -103,8 +103,10 @@ nonpersonnel_cat <-
   left_join(props_costcenter, by = join_by(costcenter_clean)) %>%
   # cleanup
   mutate(
-    is_excluded = if_else(
-      costcenter_name_clean == "CONSTRUCTION DIVISION", 1, is_excluded
+    is_excluded = case_when(
+      is_capital == "TRUE" ~ 1,
+      is_grant == "TRUE" ~ 1,
+      .default = is_excluded
     )
   ) %>%
   #
@@ -161,4 +163,8 @@ nonpersonnel_cat %>%
     net_accounted = sum(net_accounted), n_transactions = n(),
     .groups = "drop"
   )
+```
+
+```{r}
+Sys.time()
 ```

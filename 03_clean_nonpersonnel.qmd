@@ -62,6 +62,12 @@ pos_cat_prev <-
   clean_names() %>%
   mutate(across(po_number, str_squish)) %>%
   distinct(po_number, po_categorization_previous)
+
+grants <- 
+  read_excel(
+    glue("{path_working}/Grants good.xlsx"),
+    col_types = c(rep("text", 3), "logical")
+  )
 ```
 
 ```{r}
@@ -163,16 +169,28 @@ r051a_aug <-
     is.na(costcenter_name_clean) ~ costcenter_name,
     .default = costcenter_name_clean
   )) %>%
+  mutate(is_capital = case_when(
+    appropriation_fund == "3030" ~ TRUE,
+    .default = FALSE
+  )) %>% 
+  mutate(is_grant = case_when(
+    award == "1000074" & project == "400308" ~ TRUE,
+    award != "1000074" & (award %in% grants$award_current) ~ TRUE,
+    award != "1000074" & (award %in% grants$award_carryover) ~ TRUE,
+    .default = FALSE
+  )) %>% 
   select(
     costcenter_name_clean, costcenter_clean,
     program_2_name, program_2, program_name, program,
     account_name, account,
     net_accounted,
+    is_capital, is_grant,
     party_name, is_service, is_po,
     po_number, po_title, po_line_item_description,
     po_categorization_previous
   )
 ```
+
 
 ```{r}
 r051a_aug %>% write_csv("data/csv/nonpersonnel.csv", na = "")

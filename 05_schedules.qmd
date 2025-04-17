@@ -287,6 +287,60 @@ schedule_e <-
 schedule_e %>% write_xlsx("schedules/schedule_e.xlsx")
 ```
 
+F
+
+```{r}
+schedule_f <-
+  nonpersonnel_categorized %>%
+  filter(is_po == TRUE) %>%
+  group_by(costcenter_name_clean, po_number, party_name) %>%
+  summarize(
+    amt_total = sum(amt_total),
+    amt_unallowable = sum(amt_unallowable),
+    amt_excluded = sum(amt_excluded),
+    amt_direct = sum(amt_direct),
+    amt_indirect = sum(amt_indirect),
+    .groups = "drop"
+  ) %>%
+  filter(amt_total != 0.00) %>%
+  mutate(note = case_when(
+    amt_direct != 0.00 & amt_indirect != 0.00 ~ "Subaward consists of both direct and indirect services.",
+    amt_direct != 0.00 ~ "Some expenses moved to Direct Cost Pool for provision of FTE-like services.",
+    amt_indirect != 0.00 ~ "Some expenses moved to Indirect Cost Pool for agency-wide indirect services.",
+    .default = NA_character_
+  ))
+
+schedule_f %>% write_xlsx("schedules/schedule_f.xlsx")
+```
+
+I
+
+```{r}
+schedule_i <-
+  nonpersonnel_categorized %>%
+  filter(amt_excluded != 0.00) %>%
+  mutate(exclusion_type = case_when(
+    !is.na(is_excluded_food) ~ "food",
+    !is.na(is_excluded_equipment) ~ "equipment",
+    !is.na(is_excluded_passthrough) ~ "passthrough",
+    is_capital == "TRUE" ~ "capital",
+    is_grant == "TRUE" ~ "grant",
+    is_po == "TRUE" ~ "subaward"
+  )) %>%
+  group_by(costcenter_name_clean, exclusion_type) %>%
+  summarize(amt_excluded = sum(amt_excluded), .groups = "drop") %>%
+  arrange((costcenter_name_clean), (amt_excluded)) %>%
+  pivot_wider(
+    names_from = exclusion_type,
+    values_from = amt_excluded,
+    names_sort = TRUE
+  ) %>%
+  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>%
+  relocate(c(capital, equipment, food, passthrough), .after = costcenter_name_clean)
+
+schedule_i %>% write_xlsx("schedules/schedule_i.xlsx")
+```
+
 ```{r}
 Sys.time()
 ```

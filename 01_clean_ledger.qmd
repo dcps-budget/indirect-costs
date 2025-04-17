@@ -46,17 +46,11 @@ path_r023_gd0 <-
 
 # Import
 
-R209
-
 ```{r}
 r209 <-
   read_excel(path_r209, col_types = "text", range = "A17:AG5216") %>%
   clean_names()
-```
 
-R023
-
-```{r}
 r023_ga0 <-
   read_excel(path_r023_ga0, col_types = "text", range = "A15:AL53429") %>%
   clean_names()

@@ -76,6 +76,11 @@ Lookup tables
 ```{r}
 programs <- read_excel("data/programs.xlsx")
 
+costcenters <-
+  read_excel(glue("{path_working}/Cost Centers.xlsx"), col_types = "text") %>%
+  clean_names() %>%
+  select(!costcenter_name)
+
 categorization_prev <-
   read_excel("data/personnel_2023.xlsx", col_types = "text") %>%
   clean_names() %>%
@@ -93,7 +98,7 @@ categorization_sp <-
     col_types = "text"
   ) %>%
   clean_names() %>%
-  select(costcenter, program_2, program, categorization_sp, costcenter_name_clean)
+  select(costcenter, program_2, program, categorization_sp)
 
 categorization_override <-
   read_excel(
@@ -157,6 +162,17 @@ titles_manual <-
   ) %>%
   clean_names() %>%
   distinct(position, title_manual)
+
+payroll_default <-
+  read_excel(
+    glue(
+      "{path_working}/Payroll Default.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  select(!note) %>%
+  mutate(is_default = as.logical(is_default))
 ```
 
 ```{r}
@@ -221,7 +237,11 @@ data_485_simple <-
   mutate(costcenter = if_else(program == "400011", "40078", costcenter)) %>%
   mutate(
     costcenter_name = if_else(costcenter == "40078", "OFFICE OF CHIEF OPERATING OFFICER", costcenter_name)
-  )
+  ) %>%
+  rowwise() %>%
+  mutate(amt_total = sum(c_across(starts_with("amt_")))) %>%
+  ungroup() %>%
+  filter(amt_total != 0.00)
 ```
 
 ```{r}
@@ -231,6 +251,13 @@ data_485_long <-
     cols = amt_x7011001:amt_x7016001, names_to = "account", values_to = "amt"
   ) %>%
   mutate(across(account, \(x) str_remove(x, "amt_x")))
+
+data_485_long %>%
+  filter(program_name == "PAYROLL DEFAULT") %>%
+  group_by(emplid, name) %>%
+  summarize(amt = sum(amt)) %>%
+  arrange(amt) %>%
+  filter(str_detect(name, regex("benbow", ignore_case = TRUE)))
 ```
 
 ```{r}
@@ -332,6 +359,11 @@ costcenters_default <-
     program_default = program, program_name_default = program_name
   ) %>%
   mutate(is_default = TRUE)
+
+payroll_default_dedupe <-
+  payroll_default %>%
+  filter(!(emplid %in% costcenters_default$emplid)) %>%
+  bind_rows(costcenters_default)
 ```
 
 Augment
@@ -340,13 +372,14 @@ Augment
 data_485_aug <-
   data_485_clean %>%
   mutate(is_default = if_else(program_name == "PAYROLL DEFAULT", TRUE, FALSE)) %>%
-  left_join(costcenters_default, by = join_by(emplid, is_default)) %>%
+  left_join(payroll_default_dedupe, by = join_by(emplid, is_default)) %>%
   mutate(
     costcenter = if_else(!is.na(costcenter_default), costcenter_default, costcenter),
     costcenter_name = if_else(!is.na(costcenter_name_default), costcenter_name_default, costcenter_name),
     program = if_else(!is.na(program_default), program_default, program),
     program_name = if_else(!is.na(program_name_default), program_name_default, program_name)
   ) %>%
+  left_join(costcenters, by = join_by(costcenter)) %>%
   left_join(programs, by = join_by(program)) %>%
   left_join(pfr_start, by = join_by(position)) %>%
   left_join(pfr_end, by = join_by(position)) %>%
@@ -368,19 +401,15 @@ data_485_aug <-
   )) %>%
   mutate(
     categorization = case_when(
-      costcenter_name_clean == "Schools" ~ "Direct",
+      costcenter_name_clean == "SCHOOLS" ~ "Direct",
       !is.na(categorization_override) ~ categorization_override,
       !is.na(categorization_prev) ~ categorization_prev,
       .default = categorization_sp
     )
-  ) %>%
-  mutate(
-    costcenter_clean = if_else(costcenter_name_clean == "SCHOOLS", "SCHOOLS", costcenter, missing = costcenter),
-    costcenter_name_clean = if_else(!is.na(costcenter_name_clean), costcenter_name_clean, costcenter_name, , missing = costcenter_name)
   )
 ```
 
-Output files
+# Output
 
 ```{r}
 personnel <-
@@ -416,7 +445,7 @@ personnel <-
 personnel %>% write_csv("data/csv/personnel.csv", na = "")
 ```
 
-Validations
+# Diagnostics
 
 Unique combinations
 
@@ -471,8 +500,8 @@ personnel %>%
   count(costcenter_name_clean, sort = TRUE) %>%
   filter(n == 1) %>%
   select(costcenter_name_clean) %>%
-  left_join(schedule_d1) %>%
-  count(costcenter_name_clean, categorization)
+  left_join(personnel) %>%
+  count(costcenter_name_clean, costcenter_clean, categorization)
 ```
 
 Cost centers with more than 1 categorization.
@@ -484,6 +513,14 @@ personnel %>%
   count(costcenter_name_clean, sort = TRUE) %>%
   filter(n > 1) %>%
   select(costcenter_name_clean) %>%
-  left_join(schedule_d1) %>%
-  count(costcenter_name_clean, categorization)
+  left_join(personnel) %>%
+  count(costcenter_name_clean, costcenter_clean, categorization)
+```
+
+```{r}
+personnel %>% filter(program_name == "PAYROLL DEFAULT")
+```
+
+```{r}
+Sys.time()
 ```
