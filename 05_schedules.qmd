@@ -98,50 +98,6 @@ schedule_h <-
 schedule_h %>% write_xlsx("schedules/schedule_h.xlsx")
 ```
 
-Schedule I: Excluded Costs
-
-TODO:
-
-* Missing cost centers
-
-```{r}
-schedule_i <-
-  nonpersonnel_categorized %>%
-  filter(amt_excluded != 0.00) %>%
-  group_by(costcenter_clean, costcenter_name_clean, account, account_name) %>%
-  summarize(amt_excluded = round(sum(amt_excluded), 2)) %>%
-  ungroup() %>%
-  arrange(costcenter_name_clean, account_name)
-
-schedule_i %>% write_xlsx("schedules/schedule_i.xlsx")
-```
-
-Schedule J: Indirect Costs
-
-* Missing cost centers
-
-```{r}
-schedule_j <-
-  nonpersonnel_categorized %>%
-  filter(amt_indirect != 0.00) %>%
-  group_by(costcenter_clean, costcenter_name_clean, account, account_name) %>%
-  summarize(amt_indirect = round(sum(amt_indirect), 2)) %>%
-  ungroup() %>%
-  arrange(costcenter_name_clean, account_name)
-
-schedule_j_unallowable <-
-  nonpersonnel_categorized %>%
-  filter(amt_unallowable != 0.00) %>%
-  group_by(costcenter_clean, costcenter_name_clean, account, account_name) %>%
-  summarize(amt_unallowable = round(sum(amt_unallowable), 2)) %>%
-  ungroup() %>%
-  arrange(costcenter_name_clean, account_name)
-
-schedule_j %>% write_xlsx("schedules/schedule_j.xlsx")
-
-schedule_j_unallowable %>% write_xlsx("schedules/schedule_j_unallowable.xlsx")
-```
-
 A
 
 ```{r}
@@ -172,7 +128,7 @@ nonpersonnel_by_costcenter <-
     amt_total_nps = amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct_nps + amt_indirect_nps,
   )
 
-total_by_costcenter <-
+schedule_a <-
   bind_rows(
     select(personnel_categorized, costcenter_name_clean, costcenter_clean),
     select(nonpersonnel_categorized, costcenter_name_clean, costcenter_clean)
@@ -194,7 +150,7 @@ total_by_costcenter <-
   ) %>%
   arrange(costcenter_name_clean)
 
-total_by_costcenter %>% write_xlsx("schedules/total_by_costcenter.xlsx")
+schedule_a %>% write_xlsx("schedules/schedule_a.xlsx")
 ```
 
 D.1
@@ -259,6 +215,10 @@ schedule_d2 <-
   select(!is_other)
 
 schedule_d2 %>% write_xlsx("schedules/schedule_d2.xlsx")
+
+personnel_categorized %>% 
+  group_by(categorization) %>% 
+  summarize(amt_benefits = sum(amt_benefits), .groups = "drop")
 ```
 
 E
@@ -339,6 +299,35 @@ schedule_i <-
   relocate(c(capital, equipment, food, passthrough), .after = costcenter_name_clean)
 
 schedule_i %>% write_xlsx("schedules/schedule_i.xlsx")
+```
+
+Schedule J: Indirect Costs
+
+```{r}
+schedule_j_indirect <-
+  nonpersonnel_categorized %>%
+  group_by(costcenter_name_clean) %>%
+  summarize(amt_indirect = sum(amt_indirect), .groups = "drop") %>%
+  filter(amt_indirect != 0.00) %>%
+  arrange(costcenter_name_clean)
+
+schedule_j_unallowable <-
+  nonpersonnel_categorized %>%
+  mutate(across(account_name, \(x) if_else(str_detect(x, "^INT "), "INT PENALTIES", account_name))) %>% 
+  group_by(costcenter_name_clean, account_name) %>%
+  summarize(amt_unallowable = sum(amt_unallowable), .groups = "drop") %>%
+  filter(amt_unallowable != 0.00) %>%
+  arrange(account_name, costcenter_name_clean) %>% 
+  pivot_wider(names_from = account_name, values_from = amt_unallowable)
+
+schedule_j <- 
+  schedule_j_indirect %>% 
+  full_join(schedule_j_unallowable, by = join_by(costcenter_name_clean)) %>% 
+  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>% 
+  relocate(GENERAL, .after = amt_indirect) %>% 
+  arrange(costcenter_name_clean)
+
+schedule_j %>% write_xlsx("schedules/schedule_j.xlsx")
 ```
 
 ```{r}
