@@ -68,36 +68,6 @@ nonpersonnel_categorized <-
   )
 ```
 
-Schedule H: Occupancy
-
-```{r}
-occupancy <-
-  nonpersonnel_categorized %>%
-  filter(is_split_occupancy == 1)
-
-occupancy_total <-
-  occupancy %>%
-  summarize(
-    amt_total = sum(amt_total),
-    amt_direct = sum(amt_direct),
-    amt_indirect = sum(amt_indirect)
-  ) %>%
-  mutate(account_desc = "OCCUPANCY TOTAL")
-
-schedule_h <-
-  occupancy %>%
-  group_by(account_name) %>%
-  summarize(
-    amt_total = sum(amt_total),
-    amt_direct = sum(amt_direct),
-    amt_indirect = sum(amt_indirect)
-  ) %>%
-  arrange(desc(amt_total)) %>%
-  bind_rows(occupancy_total)
-
-schedule_h %>% write_xlsx("schedules/schedule_h.xlsx")
-```
-
 A
 
 ```{r}
@@ -271,6 +241,36 @@ schedule_f <-
   ))
 
 schedule_f %>% write_xlsx("schedules/schedule_f.xlsx")
+```
+
+Schedule H: Occupancy
+
+```{r}
+occupancy <-
+  nonpersonnel_categorized %>%
+  filter(is_occupancy == 1)
+
+occupancy_total <-
+  occupancy %>%
+  summarize(
+    amt_total = sum(amt_total),
+    amt_direct = sum(amt_direct),
+    amt_indirect = sum(amt_indirect)
+  ) %>%
+  mutate(account_name = "OCCUPANCY TOTAL")
+
+schedule_h <-
+  occupancy %>%
+  group_by(account_name) %>%
+  summarize(
+    amt_total = sum(amt_total),
+    amt_direct = sum(amt_direct),
+    amt_indirect = sum(amt_indirect)
+  ) %>%
+  arrange(desc(amt_total)) %>%
+  bind_rows(occupancy_total)
+
+schedule_h %>% write_xlsx("schedules/schedule_h.xlsx")
 ```
 
 I

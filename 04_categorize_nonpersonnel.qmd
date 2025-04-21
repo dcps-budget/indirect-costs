@@ -46,7 +46,7 @@ personnel <-
   read_csv(
     "data/csv/personnel.csv",
     col_types = "c",
-    col_select = c(costcenter_clean, categorization)
+    col_select = c(costcenter_clean, categorization, costcenter_name_clean)
   )
 
 accounts <-
@@ -79,6 +79,7 @@ costcenters_missing <-
 ```{r}
 props_costcenter <-
   personnel %>%
+  select(!costcenter_name_clean) %>%
   bind_rows(costcenters_missing) %>%
   count(costcenter_clean, categorization) %>%
   group_by(costcenter_clean) %>%
@@ -93,6 +94,41 @@ props_costcenter <-
   select(costcenter_clean, prop_direct = Direct, prop_indirect = Indirect)
 ```
 
+Occupancy proportions
+
+```{r}
+occupancy_central <- 
+  personnel %>%
+  filter(
+    !(costcenter_clean %in% c("SCHOOLS", "40104", "40231", "40232")),
+    !(costcenter_clean == "40077" & categorization == "Direct")
+  ) %>% 
+  count(categorization) %>% 
+  mutate(prop = n / sum(n)) %>%
+  select(!n) %>%
+  pivot_wider(
+    names_from = categorization,
+    values_from = prop,
+    values_fill = 0.0
+  ) %>% 
+  mutate(is_occupancy_central = 1) %>% 
+  rename(prop_central_direct = Direct, prop_central_indirect = Indirect)
+
+occupancy_overall <- 
+  personnel %>%
+  count(categorization) %>% 
+  mutate(prop = n / sum(n)) %>%
+  select(!n) %>%
+  pivot_wider(
+    names_from = categorization,
+    values_from = prop,
+    values_fill = 0.0
+  ) %>% 
+  mutate(is_occupancy_overall = 1) %>% 
+  rename(prop_overall_direct = Direct, prop_overall_indirect = Indirect)
+
+```
+
 #
 
 ```{r}
@@ -101,11 +137,12 @@ nonpersonnel_cat <-
   left_join(cat_po, by = join_by(po_number, account)) %>%
   left_join(accounts, by = join_by(account)) %>%
   left_join(props_costcenter, by = join_by(costcenter_clean)) %>%
+  left_join(occupancy_central, by = join_by(is_occupancy_central)) %>%
+  left_join(occupancy_overall, by = join_by(is_occupancy_overall)) %>%
   # cleanup
   mutate(
     is_excluded = case_when(
       is_capital == "TRUE" ~ 1,
-      # is_grant == "TRUE" ~ 1,
       .default = is_excluded
     )
   ) %>%
@@ -118,12 +155,15 @@ nonpersonnel_cat <-
     is_nonbudgetary == 1 ~ 0.00,
     is_unallowable == 1 ~ 0.00,
     is_po == "TRUE" & cat_po == "Excluded" ~ net_accounted,
+    is_po == "FALSE" & is_occupancy == 1 ~ 0.00,
     is_po == "FALSE" & is_excluded == 1 ~ net_accounted,
     .default = 0.00
   )) %>%
   mutate(amt_direct = case_when(
     is_po == "TRUE" & cat_po == "Direct" ~ net_accounted,
     is_po == "TRUE" ~ 0.00,
+    is_po == "FALSE" & is_occupancy_central == 1 ~ net_accounted * prop_central_direct,
+    is_po == "FALSE" & is_occupancy_overall == 1 ~ net_accounted * prop_overall_direct,
     is_po == "FALSE" & is_excluded == 1 ~ 0.00,
     is_nonbudgetary == 1 ~ 0.00,
     is_unallowable == 1 ~ 0.00,
@@ -132,6 +172,8 @@ nonpersonnel_cat <-
   mutate(amt_indirect = case_when(
     is_po == "TRUE" & cat_po == "Indirect" ~ net_accounted,
     is_po == "TRUE" ~ 0.00,
+    is_po == "FALSE" & is_occupancy_central == 1 ~ net_accounted * prop_central_indirect,
+    is_po == "FALSE" & is_occupancy_overall == 1 ~ net_accounted * prop_overall_indirect,
     is_po == "FALSE" & is_excluded == 1 ~ 0.00,
     is_nonbudgetary == 1 ~ 0.00,
     is_unallowable == 1 ~ 0.00,
