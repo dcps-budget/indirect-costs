@@ -216,8 +216,8 @@ schedule_d2 <-
 
 schedule_d2 %>% write_xlsx("schedules/schedule_d2.xlsx")
 
-personnel_categorized %>% 
-  group_by(categorization) %>% 
+personnel_categorized %>%
+  group_by(categorization) %>%
   summarize(amt_benefits = sum(amt_benefits), .groups = "drop")
 ```
 
@@ -313,21 +313,57 @@ schedule_j_indirect <-
 
 schedule_j_unallowable <-
   nonpersonnel_categorized %>%
-  mutate(across(account_name, \(x) if_else(str_detect(x, "^INT "), "INT PENALTIES", account_name))) %>% 
+  mutate(across(account_name, \(x) if_else(str_detect(x, "^INT "), "INT PENALTIES", account_name))) %>%
   group_by(costcenter_name_clean, account_name) %>%
   summarize(amt_unallowable = sum(amt_unallowable), .groups = "drop") %>%
   filter(amt_unallowable != 0.00) %>%
-  arrange(account_name, costcenter_name_clean) %>% 
+  arrange(account_name, costcenter_name_clean) %>%
   pivot_wider(names_from = account_name, values_from = amt_unallowable)
 
-schedule_j <- 
-  schedule_j_indirect %>% 
-  full_join(schedule_j_unallowable, by = join_by(costcenter_name_clean)) %>% 
-  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>% 
-  relocate(GENERAL, .after = amt_indirect) %>% 
+schedule_j <-
+  schedule_j_indirect %>%
+  full_join(schedule_j_unallowable, by = join_by(costcenter_name_clean)) %>%
+  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>%
+  relocate(GENERAL, .after = amt_indirect) %>%
   arrange(costcenter_name_clean)
 
 schedule_j %>% write_xlsx("schedules/schedule_j.xlsx")
+```
+
+K
+
+```{r}
+props_headcomponent <-
+  personnel_categorized %>%
+  group_by(costcenter_clean) %>%
+  summarize(
+    n_headcomponent = sum(headcomponent != "Non-executive" & categorization == "Indirect"),
+    n_indirect = sum(categorization == "Indirect"),
+    .groups = "drop"
+  ) %>%
+  filter(n_indirect > 0) %>%
+  mutate(prop_headcomponent = n_headcomponent / n_indirect)
+
+schedule_k <-
+  nonpersonnel_categorized %>%
+  filter(is_salaryadjustment == "1") %>%
+  mutate(account_name = case_when(
+    account_name %in% c("FUEL AUTOMOTIVE", "GAS") ~ "FUEL",
+    account_name %in% c("IT HARDWARE ACQUISITIONS", "IT SOFTWARE ACQUISITIONS", "IT SUPPLIES") ~ "IT",
+    account_name %in% c("TRAVEL - LOCAL", "TRAVEL - OUT OF CITY") ~ "TRAVEL",
+    .default = account_name
+  )) %>%
+  group_by(costcenter_clean, costcenter_name_clean, account_name) %>%
+  summarize(amt_indirect = sum(amt_indirect), .groups = "drop") %>%
+  left_join(props_headcomponent, by = join_by(costcenter_clean)) %>%
+  mutate(amt_salaryadjustment = prop_headcomponent * amt_indirect) %>%
+  filter(!is.na(n_headcomponent), amt_salaryadjustment != 0.00) %>%
+  select(!c(amt_indirect, n_headcomponent, n_indirect, prop_headcomponent)) %>%
+  arrange(costcenter_name_clean) %>%
+  pivot_wider(names_from = account_name, values_from = amt_salaryadjustment, names_sort = TRUE) %>%
+  mutate(across(where(is_double), \(x) replace_na(x, 0.00)))
+
+schedule_k %>% write_xlsx("schedules/schedule_k.xlsx")
 ```
 
 ```{r}
