@@ -180,6 +180,7 @@ r051a_aug <-
     .default = FALSE
   )) %>% 
   select(
+    fund, award,
     costcenter_name_clean, costcenter_clean,
     program_2_name, program_2, program_name, program,
     account_name, account,

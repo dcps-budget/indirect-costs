@@ -46,8 +46,9 @@ personnel <-
   read_csv(
     "data/csv/personnel.csv",
     col_types = "c",
-    col_select = c(costcenter_clean, categorization, costcenter_name_clean)
-  )
+    col_select = c(costcenter_clean, costcenter_name_clean, categorization, amt_total)
+  ) %>% 
+  mutate(across(amt_total, as.numeric))
 
 accounts <-
   read_excel(
@@ -67,12 +68,13 @@ cat_po <-
 ```{r}
 costcenters_missing <-
   tribble(
-    ~costcenter_clean, ~categorization,
-    "10040", "Indirect", # budget division, education cluster,
-    "40208", "Direct", # enrollment and residency
-    "40219", "Direct", # child care subsidy program,
-    "40229", "Direct", # nutrition programs
-    "40233", "Direct", # special education
+    ~costcenter_clean, ~categorization, ~amt_total,
+    "OCFO", "Indirect", 1.00, # OCFO
+    "10040", "Indirect", 1.00, # budget division, education cluster
+    "40208", "Direct", 1.00, # enrollment and residency
+    "40219", "Direct", 1.00, # child care subsidy program
+    "40229", "Direct", 1.00, # nutrition programs
+    "40233", "Direct", 1.00, # special education
   )
 ```
 
@@ -85,6 +87,10 @@ props_costcenter <-
   group_by(costcenter_clean) %>%
   mutate(prop = n / sum(n)) %>%
   select(!n) %>%
+  # group_by(costcenter_clean, categorization) %>% 
+  # summarize(amt_total = sum(amt_total)) %>% 
+  # mutate(prop = amt_total / sum(amt_total)) %>% 
+  # select(!amt_total) %>% 
   pivot_wider(
     id_cols = costcenter_clean,
     names_from = categorization,
@@ -103,9 +109,13 @@ occupancy_central <-
     !(costcenter_clean %in% c("SCHOOLS", "40104", "40231", "40232")),
     !(costcenter_clean == "40077" & categorization == "Direct")
   ) %>% 
-  count(categorization) %>% 
+  count(categorization) %>%
   mutate(prop = n / sum(n)) %>%
   select(!n) %>%
+  # group_by(categorization) %>% 
+  # summarize(amt_total = sum(amt_total)) %>% 
+  # mutate(prop = amt_total / sum(amt_total)) %>% 
+  # select(!amt_total) %>% 
   pivot_wider(
     names_from = categorization,
     values_from = prop,
@@ -116,9 +126,13 @@ occupancy_central <-
 
 occupancy_overall <- 
   personnel %>%
-  count(categorization) %>% 
+  count(categorization) %>%
   mutate(prop = n / sum(n)) %>%
   select(!n) %>%
+  # group_by(categorization) %>% 
+  # summarize(amt_total = sum(amt_total)) %>% 
+  # mutate(prop = amt_total / sum(amt_total)) %>% 
+  # select(!amt_total) %>% 
   pivot_wider(
     names_from = categorization,
     values_from = prop,
@@ -179,10 +193,25 @@ nonpersonnel_cat <-
     is_unallowable == 1 ~ 0.00,
     .default = net_accounted * prop_indirect
   )) %>%
+  mutate(amt_direct = case_when(
+    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) & fund == "1010001" ~ 0.00,
+    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) ~ net_accounted,
+    .default = amt_direct
+  )) %>% 
+  mutate(amt_indirect = case_when(
+    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) & fund == "1010001" ~ net_accounted,
+    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) ~ 0.00,
+    .default = amt_indirect
+  )) %>% 
   mutate(
     amt_total = amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct + amt_indirect
   ) %>%
   filter(!is.na(amt_total))
+
+nonpersonnel_cat %>% 
+  filter(str_detect(party_name, regex("security assurance", ignore_case = TRUE))) %>% 
+  group_by(fund) %>% 
+  summarize(amt_total = sum(amt_total))
 ```
 
 ```{r}
@@ -190,6 +219,8 @@ nonpersonnel_cat %>% write_csv("data/csv/nonpersonnel_cat.csv", na = "")
 ```
 
 # Diagnostics
+
+316370142.98
 
 ```{r}
 nonpersonnel_cat %>%
@@ -205,6 +236,10 @@ nonpersonnel_cat %>%
     net_accounted = sum(net_accounted), n_transactions = n(),
     .groups = "drop"
   )
+
+nonpersonnel_cat %>% 
+  group_by(costcenter_name_clean) %>% 
+  summarize(amt_total = sum(amt_total))
 ```
 
 ```{r}

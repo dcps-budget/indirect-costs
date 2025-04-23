@@ -3,10 +3,6 @@ title: "Clean Personnel"
 format: html
 ---
 
-TODO:
-
-* Payroll default records
-
 ```{r}
 library(tidyverse)
 library(glue)
@@ -193,6 +189,17 @@ Add column for personnel account 7013011, which is present in the general ledger
 but missing from the 485.
 
 ```{r}
+bad <- c(
+  32416, 39165, 40285, 46793, 48416,
+  51235, 51838, 52494, 54657, 69558,
+  78623, 90490, 99276, 107360, 111632,
+  119234, 129712, 130670, 131973, 133908,
+  136284, 136301, 136361, 136514, 136516,
+  136518, 136519, 136643, 136894, 137041
+) %>% as.character()
+```
+
+```{r}
 data_485_simple <-
   data_485_raw %>%
   rename(
@@ -241,7 +248,9 @@ data_485_simple <-
   rowwise() %>%
   mutate(amt_total = sum(c_across(starts_with("amt_")))) %>%
   ungroup() %>%
-  filter(amt_total != 0.00)
+  filter(amt_total != 0.00) %>%
+  filter(costcenter != "40223")
+# %>% filter(!(emplid %in% bad))
 ```
 
 ```{r}
@@ -402,10 +411,15 @@ data_485_aug <-
   mutate(
     categorization = case_when(
       costcenter_name_clean == "SCHOOLS" ~ "Direct",
+      program_name == "PAYROLL DEFAULT" ~ "Indirect",
       !is.na(categorization_override) ~ categorization_override,
       !is.na(categorization_prev) ~ categorization_prev,
       .default = categorization_sp
     )
+  ) %>%
+  mutate(
+    costcenter_clean = if_else(program_name == "PAYROLL DEFAULT", "00000", costcenter_clean),
+    costcenter_name_clean = if_else(program_name == "PAYROLL DEFAULT", "NO COST CENTER", costcenter_name_clean)
   )
 ```
 
@@ -518,7 +532,16 @@ personnel %>%
 ```
 
 ```{r}
-personnel %>% filter(program_name == "PAYROLL DEFAULT")
+personnel %>%
+  filter(program_name == "PAYROLL DEFAULT")
+```
+
+ $1,168,754,375.06 
+
+```{r}
+personnel %>%
+  pull(amt_total) %>%
+  sum()
 ```
 
 ```{r}
