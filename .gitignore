@@ -1,7 +1,9 @@
-.Rproj.user
-.Rhistory
 .RData
+.Renviron
+.Rhistory
+.Rproj.user
 .Ruserdata
 
 *.csv
+*.parquet
 *.xlsx
