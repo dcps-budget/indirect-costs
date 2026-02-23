@@ -3,73 +3,29 @@ title: "Clean Personnel"
 format: html
 ---
 
+# Setup
+
 ```{r}
 library(tidyverse)
 library(glue)
 library(janitor)
 library(readxl)
 library(writexl)
+library(arrow)
 
 options(scipen = 12, digits = 12)
-```
 
-# Setup
-
-```{r}
-path_data <- glue(
-  "C:/Users",
-  "{Sys.getenv('USERNAME')}",
-  "OneDrive - District of Columbia Public Schools",
-  "Data",
-  .sep = "/"
-)
-
-path_working <- glue(
-  "C:/Users",
-  "{Sys.getenv('USERNAME')}",
-  "OneDrive - District of Columbia Public Schools",
-  "Working Files - Indirect Cost",
-  .sep = "/"
-)
-
-fy <- 2024
-
-dir_485 <- glue("{path_data}/Personnel/485/raw/{fy}")
+path_data <- Sys.getenv("PATH_DATA")
+year_fiscal <- Sys.getenv("YEAR_FISCAL")
 ```
 
 # Import
 
-Functions
-
-```{r}
-read_485 <- function(file_485, dir_485) {
-  path <- glue(dir_485, file_485, .sep = "/")
-
-  pp_485 <- str_sub(file_485, start = 1, end = 4)
-  date_485 <- str_sub(file_485, start = 6, end = 15)
-  group_485 <- str_remove(str_sub(file_485, start = 17, end = -1), ".xlsx")
-
-  read_excel(path, col_types = "text") %>%
-    mutate(
-      pp_485 = pp_485,
-      date_485 = date_485,
-      group_485 = group_485
-    )
-}
-```
-
-Ledger
-
-```{r}
-ledger <- read_csv(
-  "data/csv/ledger.csv",
-  col_types = cols(ending_balance = col_double(), .default = col_character())
-)
-```
-
 Lookup tables
 
 ```{r}
+#| eval: false
+
 programs <- read_excel("data/programs.xlsx")
 
 costcenters <-
@@ -107,38 +63,6 @@ categorization_override <-
   filter(!is.na(categorization_override)) %>%
   distinct(costcenter, position, categorization_override)
 
-pfr_start <-
-  read_csv(
-    glue("{path_data}/Personnel/PeopleSoft/raw/{fy}/pfr_{fy - 1}-10-01.csv"),
-    col_types = cols(.default = col_character()),
-    skip = 5,
-    n_max = 14981
-  ) %>%
-  clean_names() %>%
-  rename(costcenter = cost_center, position = position_number) %>%
-  mutate(across(c(costcenter, position), \(x) str_remove_all(x, "=*\""))) %>%
-  mutate(
-    across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))
-  ) %>%
-  mutate(across(c(title), \(x) str_to_upper(str_squish(x)))) %>%
-  distinct(position, title_start = title)
-
-pfr_end <-
-  read_csv(
-    glue("{path_data}/Personnel/PeopleSoft/raw/{fy}/pfr_{fy}-09-30.csv"),
-    col_types = cols(.default = col_character()),
-    skip = 5,
-    n_max = 14892
-  ) %>%
-  clean_names() %>%
-  rename(costcenter = cost_center, position = position_number) %>%
-  mutate(across(c(costcenter, position), \(x) str_remove_all(x, "=*\""))) %>%
-  mutate(
-    across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))
-  ) %>%
-  mutate(across(c(title), \(x) str_to_upper(str_squish(x)))) %>%
-  distinct(position, title_end = title)
-
 headcomponent <-
   read_excel(
     glue(
@@ -171,158 +95,187 @@ payroll_default <-
   mutate(is_default = as.logical(is_default))
 ```
 
-```{r}
-files_485 <- list.files(dir_485)
+Ledger
 
-data_485_raw <-
-  map(
-    files_485,
-    \(file_485) read_485(file_485, dir_485)
+```{r}
+ledger <-
+  read_parquet(glue("{path_data}/ledger.parquet")) %>%
+  filter(
+    account_category == "700000A",
+    account_id != "7012999"
   ) %>%
-  list_rbind() %>%
-  clean_names()
+  filter(ending_balance != 0.00)
+```
+
+Personnel
+
+```{r}
+data_485_raw <-
+  read_parquet(glue("{path_data}/personnel_{year_fiscal}.parquet")) %>%
+  replace_na(list(project_id = "000000", award_id = "0000000")) %>%
+  select(!c(row_485, account_raw, account_pref_2, account_pref_4))
 ```
 
 # Tidy
 
-Add column for personnel account 7013011, which is present in the general ledger 
-but missing from the 485.
+Initial cleaning
+
+Unique values:
+* Position ID and Position Title
+* Employee ID and Employee Name
 
 ```{r}
-bad <- c(
-  32416, 39165, 40285, 46793, 48416,
-  51235, 51838, 52494, 54657, 69558,
-  78623, 90490, 99276, 107360, 111632,
-  119234, 129712, 130670, 131973, 133908,
-  136284, 136301, 136361, 136514, 136516,
-  136518, 136519, 136643, 136894, 137041
-) %>% as.character()
-```
-
-```{r}
-data_485_simple <-
+position_titles <-
   data_485_raw %>%
-  rename(
-    costcenter = cost_center,
-    costcenter_name = cost_cntr_descr,
-    program_name = prog_descr
-  ) %>%
-  select(
-    costcenter, costcenter_name,
-    program, program_name,
-    position,
-    emplid, name,
-    pp_485, group_485, date_485,
-    amt_x7011001:amt_x7016001
-  ) %>%
-  mutate(amt_x7013011 = 0.00, .after = amt_x7013010) %>%
-  mutate(across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))) %>%
-  mutate(across(name, \(x) str_to_upper(str_squish(x)))) %>%
-  mutate(across(starts_with("amt_"), \(x) (as.numeric(x)))) %>%
-  # corrections
-  # correction
-  mutate(position = if_else(emplid == "87062", "00089440", position)) %>%
-  # correction
-  mutate(costcenter = if_else(costcenter == "60030", "40081", costcenter)) %>%
-  mutate(
-    costcenter_name = if_else(costcenter == "40081", "OFFICE OF SCHOOL IMPROVEMENT AND SUPPORT", costcenter_name)
-  ) %>%
-  # correction
-  mutate(
-    costcenter_name = if_else(costcenter == "40079", "OFFICE OF DATA AND TECHNOLOGY", costcenter_name)
-  ) %>%
-  # correction
-  mutate(program = if_else(program == "600181", "400267", program)) %>%
-  mutate(
-    program_name = if_else(program == "400267", "STUDENT PLACEMENT - SS", program_name)
-  ) %>%
-  # correction
-  mutate(program = if_else(position == "00108956", "400011", program)) %>%
-  mutate(
-    program_name = if_else(program == "400011", "FOOD SERVICES - SWCS", program_name)
-  ) %>%
-  mutate(costcenter = if_else(program == "400011", "40078", costcenter)) %>%
-  mutate(
-    costcenter_name = if_else(costcenter == "40078", "OFFICE OF CHIEF OPERATING OFFICER", costcenter_name)
-  ) %>%
-  rowwise() %>%
-  mutate(amt_total = sum(c_across(starts_with("amt_")))) %>%
+  distinct(position_id, position_title, pay_end_dt) %>%
+  group_by(position_id) %>%
+  slice_max(order_by = pay_end_dt, n = 1) %>%
   ungroup() %>%
-  filter(amt_total != 0.00) %>%
-  filter(costcenter != "40223")
-# %>% filter(!(emplid %in% bad))
-```
+  select(position_id, position_title)
 
-```{r}
-data_485_long <-
-  data_485_simple %>%
-  pivot_longer(
-    cols = amt_x7011001:amt_x7016001, names_to = "account", values_to = "amt"
-  ) %>%
-  mutate(across(account, \(x) str_remove(x, "amt_x")))
-
-data_485_long %>%
-  filter(program_name == "PAYROLL DEFAULT") %>%
-  group_by(emplid, name) %>%
-  summarize(amt = sum(amt)) %>%
-  arrange(amt) %>%
-  filter(str_detect(name, regex("benbow", ignore_case = TRUE)))
-```
-
-```{r}
-n_rows_485 <- data_485_simple %>% nrow()
-
-ledger_p_by_account <-
-  ledger %>%
-  filter(account_category_desc == "PERSONNEL SERVICES") %>%
-  filter(account != "7012999") %>%
-  group_by(account, account_name) %>%
-  summarize(ending_balance = sum(ending_balance)) %>%
-  filter(ending_balance != 0.00)
-```
-
-```{r}
-accounts_485 <-
-  data_485_long %>%
-  group_by(account) %>%
-  summarize(amt_485 = sum(amt))
-
-adjustments_by_account <-
-  ledger_p_by_account %>%
-  left_join(accounts_485, by = join_by(account)) %>%
-  mutate(
-    rec_addon = if_else(
-      is.na(amt_485) | amt_485 == 0.00, ending_balance / n_rows_485, 0.00
-    )
-  ) %>%
-  mutate(
-    rec_multiplier = if_else(
-      is.na(amt_485) | amt_485 == 0.00, 1.00, ending_balance / amt_485
-    )
-  ) %>%
-  select(account, rec_addon, rec_multiplier)
-
-data_485_corrected <-
-  data_485_long %>%
-  right_join(adjustments_by_account, join_by(account)) %>%
-  mutate(amt_corrected = (amt + rec_addon) * rec_multiplier) %>%
-  mutate(account_col = str_c("amt", account, sep = "_")) %>%
-  group_by(
-    costcenter, costcenter_name,
-    program, program_name,
-    position, emplid, name,
-    pp_485, group_485, date_485,
-    account_col
-  ) %>%
-  summarize(amt_corrected = sum(amt_corrected)) %>%
+employee_names <-
+  data_485_raw %>%
+  distinct(employee_id, employee_name, pay_end_dt) %>%
+  group_by(employee_id) %>%
+  slice_max(order_by = pay_end_dt, n = 1) %>%
   ungroup() %>%
-  pivot_wider(
-    id_cols = c(costcenter:date_485),
-    names_from = account_col,
-    values_from = amt_corrected,
-    names_sort = TRUE
+  select(employee_id, employee_name)
+```
+
+```{r}
+data_485 <-
+  data_485_raw %>%
+  filter(
+    account_id != "spc",
+    account_id != "3111003",
+    account_id != "7013002",
+    account_id != "7016001"
   )
+
+data_485 <-
+  data_485 %>%
+  select(!c(
+    position_title,
+    employee_name
+  )) %>%
+  left_join(position_titles, by = join_by(position_id)) %>%
+  left_join(employee_names, by = join_by(employee_id))
 ```
+
+Compare accounts in ledger to accounts in 485.
+
+Find ledger accounts missing from 485.
+For these missing accounts, additional rows will be imputed into the 485.
+
+Find accounts present in ledger and in 485.
+For these accounts, a multiplier will calculated per account so that personnel 
+spending in the 485 equals personnel spending in the ledger.
+
+```{r}
+ledger_rollup <-
+  ledger %>%
+  summarize(expense_ledger = sum(ending_balance), .by = c(
+    account_id, account_name,
+  )) %>%
+  arrange(account_id) %>%
+  filter(expense_ledger != 0.00)
+
+personnel_rollup <-
+  data_485 %>%
+  summarize(expense_485 = sum(amount), .by = c(
+    account_id
+  )) %>%
+  arrange(account_id) %>%
+  filter(expense_485 != 0.00)
+
+personnel_comparison <-
+  ledger_rollup %>%
+  full_join(personnel_rollup, by = join_by(
+    account_id
+  ))
+
+accounts_missing_485 <-
+  personnel_comparison %>%
+  filter(is.na(expense_485)) %>%
+  select(account_id, expense_ledger)
+
+multipliers <-
+  personnel_comparison %>%
+  filter(!is.na(expense_485)) %>%
+  mutate(multiplier = expense_ledger / expense_485) %>%
+  select(account_id, multiplier)
+```
+
+Impute
+
+```{r}
+attributes_imputable <-
+  ledger %>%
+  filter(account_id %in% accounts_missing_485$account_id) %>%
+  distinct(
+    fund_id, program_id, costcenter_id, project_id, award_id,
+    account_id
+  ) %>%
+  mutate(is_imputed = TRUE) %>%
+  pivot_wider(
+    names_from = account_id, names_sort = TRUE,
+    values_from = is_imputed
+  )
+
+rows_need_impute_specific <-
+  data_485 %>%
+  left_join(attributes_imputable, by = join_by(
+    fund_id, program_id, costcenter_id, project_id, award_id
+  )) %>%
+  filter(if_any(`7013015`:`7014021`)) %>%
+  select(!c(amount, account_id)) %>%
+  pivot_longer(
+    cols = c(`7013015`:`7014021`),
+    names_to = "account_id", values_to = "is_imputed", values_drop_na = TRUE
+  ) %>%
+  select(!is_imputed)
+
+rows_need_impute_general <-
+  data_485 %>%
+  select(!c(account_id, amount)) %>%
+  distinct() %>%
+  mutate(account_id = "7014010")
+
+rows_need_impute <-
+  bind_rows(
+    rows_need_impute_specific,
+    rows_need_impute_general
+  )
+
+amounts_impute <-
+  rows_need_impute %>%
+  count(account_id) %>%
+  left_join(accounts_missing_485, by = join_by(account_id)) %>%
+  mutate(amount = expense_ledger / n) %>%
+  select(account_id, amount) %>%
+  arrange(account_id)
+
+rows_imputed <-
+  rows_need_impute %>%
+  left_join(amounts_impute, by = join_by(account_id))
+```
+
+```{r}
+data_485_corrected <-
+  data_485 %>%
+  left_join(multipliers, by = join_by(account_id)) %>%
+  mutate(amount = amount * multiplier) %>%
+  select(!multiplier) %>%
+  bind_rows(rows_imputed)
+
+data_485_corrected %>%
+  filter(!(costcenter_id %in% ledger$costcenter_id)) %>%
+  distinct(costcenter_id, costcenter_name)
+```
+
+***
+
+# Transform
 
 ```{r}
 data_485_clean <-
@@ -340,15 +293,7 @@ data_485_clean <-
   )
 ```
 
-```{r}
-names_clean <-
-  data_485_clean %>%
-  distinct(emplid, name, pp_485) %>%
-  group_by(emplid) %>%
-  slice_max(order_by = pp_485, n = 1) %>%
-  ungroup() %>%
-  select(emplid, name_clean = name)
-```
+
 
 ```{r}
 costcenters_default <-

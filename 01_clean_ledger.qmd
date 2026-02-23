@@ -3,6 +3,8 @@ title: "Clean Ledger"
 format: html
 ---
 
+# Setup
+
 ```{r}
 library(tidyverse)
 library(glue)
@@ -12,11 +14,7 @@ library(writexl)
 library(arrow)
 
 options(scipen = 12, digits = 12)
-```
 
-# Setup
-
-```{r}
 path_data <- Sys.getenv("PATH_DATA")
 year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
@@ -47,14 +45,15 @@ r023_gd0 <-
     range = "A15:AL11651"
   )
 
-r023_raw <- bind_rows(r023_ga0, r023_gd0)
+r023_raw <-
+  bind_rows(r023_ga0, r023_gd0) %>%
+  filter(Agency == "GA0" | ((Project %in% r209$project_id)))
 ```
 
 "Compiled General Ledger" document for submission
 
 ```{r}
 r023_raw %>%
-  filter(Agency == "GA0" | ((Project %in% r209$project_id))) %>%
   write_xlsx(glue("{path_data}/schedules/3.1 Compiled General Ledger.xlsx"))
 ```
 
@@ -78,7 +77,6 @@ r023_rename <-
 ```{r}
 ledger <-
   r023_rename %>%
-  filter(agency_id == "GA0" | ((project_id %in% r209$project_id))) %>%
   mutate(
     is_nonbudgetary = (award_id == "9999998"),
     is_osse = (agency_id == "GD0"),
