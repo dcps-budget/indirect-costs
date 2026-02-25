@@ -105,6 +105,14 @@ ledger <-
     account_id != "7012999"
   ) %>%
   filter(ending_balance != 0.00)
+
+ledger_rollup <-
+  ledger %>%
+  summarize(expense_ledger = sum(ending_balance), .by = c(
+    account_id, account_name,
+  )) %>%
+  arrange(account_id) %>%
+  filter(expense_ledger != 0.00)
 ```
 
 Personnel
@@ -114,50 +122,67 @@ data_485_raw <-
   read_parquet(glue("{path_data}/personnel_{year_fiscal}.parquet")) %>%
   replace_na(list(project_id = "000000", award_id = "0000000")) %>%
   select(!c(row_485, account_raw, account_pref_2, account_pref_4))
+
+data_485 <-
+  data_485_raw %>%
+  filter(costcenter_id %in% ledger$costcenter_id) %>%
+  filter(
+    account_id != "spc", # not an account ID
+    account_id != "3111003", # not personnel
+    account_id != "7013002", # not in ledger
+    account_id != "7016001" # not in ledger
+  )
 ```
 
 # Tidy
 
 Initial cleaning
 
-Unique values:
-* Position ID and Position Title
-* Employee ID and Employee Name
-
 ```{r}
+program_names <-
+  ledger %>%
+  distinct(program_id, program_name)
+
+costcenter_names <-
+  ledger %>%
+  distinct(costcenter_id, costcenter_name)
+
+project_names <-
+  ledger %>%
+  distinct(project_id, project_name)
+
+award_names <-
+  ledger %>%
+  distinct(award_id, award_name)
+
 position_titles <-
   data_485_raw %>%
   distinct(position_id, position_title, pay_end_dt) %>%
-  group_by(position_id) %>%
-  slice_max(order_by = pay_end_dt, n = 1) %>%
-  ungroup() %>%
+  slice_max(order_by = pay_end_dt, n = 1, by = position_id) %>%
   select(position_id, position_title)
 
 employee_names <-
   data_485_raw %>%
   distinct(employee_id, employee_name, pay_end_dt) %>%
-  group_by(employee_id) %>%
-  slice_max(order_by = pay_end_dt, n = 1) %>%
-  ungroup() %>%
+  slice_max(order_by = pay_end_dt, n = 1, by = employee_id) %>%
   select(employee_id, employee_name)
 ```
 
 ```{r}
 data_485 <-
-  data_485_raw %>%
-  filter(
-    account_id != "spc",
-    account_id != "3111003",
-    account_id != "7013002",
-    account_id != "7016001"
-  )
-
-data_485 <-
   data_485 %>%
   select(!c(
+    program_name,
+    costcenter_name,
+    project_name,
+    award_name,
     position_title,
     employee_name
   )) %>%
+  left_join(program_names, by = join_by(program_id)) %>%
+  left_join(costcenter_names, by = join_by(costcenter_id)) %>%
+  left_join(project_names, by = join_by(project_id)) %>%
+  left_join(award_names, by = join_by(award_id)) %>%
   left_join(position_titles, by = join_by(position_id)) %>%
   left_join(employee_names, by = join_by(employee_id))
 ```
@@ -165,21 +190,13 @@ data_485 <-
 Compare accounts in ledger to accounts in 485.
 
 Find ledger accounts missing from 485.
-For these missing accounts, additional rows will be imputed into the 485.
+For these accounts, additional rows will be imputed into the 485.
 
 Find accounts present in ledger and in 485.
 For these accounts, a multiplier will calculated per account so that personnel 
 spending in the 485 equals personnel spending in the ledger.
 
 ```{r}
-ledger_rollup <-
-  ledger %>%
-  summarize(expense_ledger = sum(ending_balance), .by = c(
-    account_id, account_name,
-  )) %>%
-  arrange(account_id) %>%
-  filter(expense_ledger != 0.00)
-
 personnel_rollup <-
   data_485 %>%
   summarize(expense_485 = sum(amount), .by = c(
@@ -213,7 +230,7 @@ attributes_imputable <-
   ledger %>%
   filter(account_id %in% accounts_missing_485$account_id) %>%
   distinct(
-    fund_id, program_id, costcenter_id, project_id, award_id,
+    fund_id, program_id, costcenter_id,
     account_id
   ) %>%
   mutate(is_imputed = TRUE) %>%
@@ -222,10 +239,10 @@ attributes_imputable <-
     values_from = is_imputed
   )
 
-rows_need_impute_specific <-
+rows_need_impute <-
   data_485 %>%
   left_join(attributes_imputable, by = join_by(
-    fund_id, program_id, costcenter_id, project_id, award_id
+    fund_id, program_id, costcenter_id,
   )) %>%
   filter(if_any(`7013015`:`7014021`)) %>%
   select(!c(amount, account_id)) %>%
@@ -234,18 +251,6 @@ rows_need_impute_specific <-
     names_to = "account_id", values_to = "is_imputed", values_drop_na = TRUE
   ) %>%
   select(!is_imputed)
-
-rows_need_impute_general <-
-  data_485 %>%
-  select(!c(account_id, amount)) %>%
-  distinct() %>%
-  mutate(account_id = "7014010")
-
-rows_need_impute <-
-  bind_rows(
-    rows_need_impute_specific,
-    rows_need_impute_general
-  )
 
 amounts_impute <-
   rows_need_impute %>%
@@ -269,8 +274,20 @@ data_485_corrected <-
   bind_rows(rows_imputed)
 
 data_485_corrected %>%
-  filter(!(costcenter_id %in% ledger$costcenter_id)) %>%
-  distinct(costcenter_id, costcenter_name)
+  pull(amount) %>%
+  sum()
+
+ledger %>%
+  pull(ending_balance) %>%
+  sum()
+```
+
+```{r}
+#| eval: false
+
+data_485_corrected %>%
+  filter(is.na(position_title)) %>%
+  distinct(position_id)
 ```
 
 ***
