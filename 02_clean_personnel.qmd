@@ -282,12 +282,83 @@ ledger %>%
   sum()
 ```
 
+Find correct programs for payroll default records.
+
 ```{r}
-#| eval: false
+has_program_position <-
+  data_485_corrected %>%
+  filter(!is.na(program_name)) %>%
+  slice_max(
+    order_by = pay_end_dt, n = 1, by = position_id, with_ties = FALSE
+  ) %>%
+  select(position_id, program_id, program_name)
+
+has_program_employee <-
+  data_485_corrected %>%
+  filter(!is.na(program_name)) %>%
+  slice_max(
+    order_by = pay_end_dt, n = 1, by = employee_id, with_ties = FALSE
+  ) %>%
+  select(employee_id, program_id, program_name)
+
+program_foundby_position <-
+  data_485_corrected %>%
+  filter(is.na(program_name)) %>%
+  distinct(position_id) %>%
+  filter(position_id %in% has_program_position$position_id) %>%
+  left_join(has_program_position, by = join_by(position_id)) %>%
+  arrange(program_name, position_id)
+
+program_foundby_employee <-
+  data_485_corrected %>%
+  filter(is.na(program_name)) %>%
+  filter(!(position_id %in% program_foundby_position$position_id)) %>%
+  distinct(employee_id) %>%
+  filter(employee_id %in% has_program_employee$employee_id) %>%
+  left_join(has_program_employee, by = join_by(employee_id)) %>%
+  arrange(program_name, employee_id)
 
 data_485_corrected %>%
-  filter(is.na(position_title)) %>%
-  distinct(position_id)
+  filter(is.na(program_name)) %>%
+  distinct(costcenter_name, program_id, position_id) %>%
+  count(costcenter_name, program_id)
+```
+
+Find correct cost centers for payroll default records.
+
+```{r}
+has_costcenter_position <-
+  data_485_corrected %>%
+  filter(program_id != "150011") %>%
+  slice_max(
+    order_by = pay_end_dt, n = 1, by = position_id, with_ties = FALSE
+  ) %>%
+  select(position_id, costcenter_id, costcenter_name)
+
+has_costcenter_employee <-
+  data_485_corrected %>%
+  filter(program_id != "150011") %>%
+  slice_max(
+    order_by = pay_end_dt, n = 1, by = employee_id, with_ties = FALSE
+  ) %>%
+  select(employee_id, costcenter_id, costcenter_name)
+
+costcenter_foundby_position <-
+  data_485_corrected %>%
+  filter(program_id == "150011") %>%
+  distinct(position_id) %>%
+  filter(position_id %in% has_costcenter_position$position_id) %>%
+  left_join(has_costcenter_position, by = join_by(position_id)) %>%
+  arrange(costcenter_name, position_id)
+
+costcenter_foundby_employee <-
+  data_485_corrected %>%
+  filter(program_id == "150011") %>%
+  filter(!(position_id %in% costcenter_foundby_position$position_id)) %>%
+  distinct(employee_id) %>%
+  filter(employee_id %in% has_costcenter_employee$employee_id) %>%
+  left_join(has_costcenter_employee, by = join_by(employee_id)) %>%
+  arrange(costcenter_name, employee_id)
 ```
 
 ***
