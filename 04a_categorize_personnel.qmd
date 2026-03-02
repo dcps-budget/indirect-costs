@@ -1,0 +1,205 @@
+---
+title: "Clean Personnel"
+format: html
+---
+
+# Setup
+
+```{r}
+library(tidyverse)
+library(glue)
+library(janitor)
+library(readxl)
+library(writexl)
+library(arrow)
+
+options(scipen = 12, digits = 12)
+
+path_data <- Sys.getenv("PATH_DATA")
+year_fiscal <- Sys.getenv("YEAR_FISCAL")
+```
+
+# Import
+
+Lookup tables
+
+```{r}
+#| eval: false
+
+categorization_prev <-
+  read_excel("data/personnel_2023.xlsx", col_types = "text") %>%
+  clean_names() %>%
+  mutate(
+    across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))
+  ) %>%
+  distinct(costcenter, position, categorization_prev = position_type) %>%
+  arrange(costcenter, position, categorization_prev)
+
+categorization_sp <-
+  read_excel(
+    glue(
+      "{path_working}/Categorization by Cost Center, Program 2, Program.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  select(costcenter, program_2, program, categorization_sp)
+
+categorization_override <-
+  read_excel(
+    glue(
+      "{path_working}/Override Personnel.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  filter(!is.na(categorization_override)) %>%
+  distinct(costcenter, position, categorization_override)
+
+headcomponent <-
+  read_excel(
+    glue(
+      "{path_working}/Head of Component.xlsx"
+    ),
+    col_types = "text"
+  ) %>%
+  clean_names() %>%
+  distinct(costcenter, position, is_executive, is_headcomponent)
+```
+
+Personnel
+
+```{r}
+data_485_raw <-
+  read_parquet(glue("{path_data}/personnel_{year_fiscal}.parquet")) %>%
+  replace_na(list(project_id = "000000", award_id = "0000000")) %>%
+  select(!c(row_485, account_raw, account_pref_2, account_pref_4))
+
+data_485_raw %>% nrow()
+```
+
+***
+
+# Transform
+
+```{r}
+data_485_clean <-
+  data_485_corrected %>%
+  mutate(
+    amt_pay_base = rowSums(across(starts_with("amt_7011") | starts_with("amt_7012"))),
+    amt_pay_additonal = rowSums(across(starts_with("amt_7013"))),
+    amt_overtime = rowSums(across(starts_with("amt_7015"))),
+    amt_exception = rowSums(across(starts_with("amt_7016"))),
+  ) %>%
+  mutate(
+    amt_salary = amt_pay_base + amt_pay_additonal + amt_overtime + amt_exception,
+    amt_benefits = rowSums(across(starts_with("amt_7014"))),
+    amt_terminal = amt_7013007
+  )
+```
+
+Augment
+
+```{r}
+data_485_aug <-
+  data_485_clean %>%
+  left_join(costcenters, by = join_by(costcenter)) %>%
+  left_join(programs, by = join_by(program)) %>%
+  left_join(headcomponent, by = join_by(costcenter, position)) %>%
+  left_join(categorization_override, by = join_by(costcenter, position)) %>%
+  left_join(categorization_prev, by = join_by(costcenter, position)) %>%
+  left_join(categorization_sp, by = join_by(costcenter, program_2, program)) %>%
+  mutate(headcomponent = case_when(
+    is_executive == 1 ~ "Executive",
+    is_headcomponent == 1 ~ "Head of component",
+    .default = "Non-executive"
+  )) %>%
+  mutate(
+    categorization = case_when(
+      costcenter_name_clean == "SCHOOLS" ~ "Direct",
+      !is.na(categorization_override) ~ categorization_override,
+      !is.na(categorization_prev) ~ categorization_prev,
+      .default = categorization_sp
+    )
+  ) %>%
+  mutate(
+    costcenter_clean = if_else(program_name == "PAYROLL DEFAULT", "00000", costcenter_clean),
+    costcenter_name_clean = if_else(program_name == "PAYROLL DEFAULT", "NO COST CENTER", costcenter_name_clean)
+  )
+```
+
+# Output
+
+```{r}
+personnel <-
+  data_485_aug %>%
+  group_by(
+    costcenter_clean, costcenter, program_2, program, position, emplid, headcomponent,
+    costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean,
+    categorization
+  ) %>%
+  summarize(
+    amt_salary = sum(amt_salary),
+    amt_benefits = sum(amt_benefits),
+    amt_terminal = sum(amt_terminal)
+  ) %>%
+  ungroup() %>%
+  relocate(
+    c(categorization, costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean, headcomponent)
+  ) %>%
+  mutate(
+    amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
+    amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
+    amt_total = amt_direct + amt_indirect,
+    amt_unrestricted = if_else(headcomponent == "Non-executive", amt_salary + amt_benefits, 0.00),
+    amt_headcomponent_direct = if_else(headcomponent != "Non-executive" & categorization == "Direct", amt_total, 0),
+    amt_headcomponent_indirect = if_else(headcomponent != "Non-executive" & categorization == "Indirect", amt_total, 0),
+    amt_headcomponent_total = if_else(headcomponent != "Non-executive", amt_total, 0),
+    amt_terminal_to_indirect = if_else(categorization == "Direct" & headcomponent == "Non-executive", amt_terminal, 0),
+    amt_terminal_restricted = if_else(headcomponent != "Non-executive", amt_terminal, 0)
+  ) %>%
+  arrange(costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean) %>%
+  relocate(c(costcenter_clean, costcenter, program_2, program, position, emplid), .after = last_col())
+
+personnel %>% write_csv("data/csv/personnel.csv", na = "")
+```
+
+Every cost center, position group is associated with only 1 categorization.
+
+PASS
+
+```{r}
+data_485_aug %>%
+  distinct(costcenter, position, categorization) %>%
+  count(costcenter, position, sort = T) %>%
+  filter(n > 1)
+```
+
+Cost centers with only 1 categorization.
+
+```{r}
+personnel %>%
+  distinct(costcenter_name_clean, categorization) %>%
+  count(costcenter_name_clean, sort = TRUE) %>%
+  filter(n == 1) %>%
+  select(costcenter_name_clean) %>%
+  left_join(personnel) %>%
+  count(costcenter_name_clean, costcenter_clean, categorization)
+```
+
+Cost centers with more than 1 categorization.
+
+```{r}
+personnel %>%
+  filter(costcenter != "10002") %>%
+  distinct(costcenter_name_clean, categorization) %>%
+  count(costcenter_name_clean, sort = TRUE) %>%
+  filter(n > 1) %>%
+  select(costcenter_name_clean) %>%
+  left_join(personnel) %>%
+  count(costcenter_name_clean, costcenter_clean, categorization)
+```
+
+```{r}
+Sys.time()
+```

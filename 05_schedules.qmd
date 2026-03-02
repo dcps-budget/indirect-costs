@@ -313,7 +313,10 @@ schedule_j_indirect <-
 
 schedule_j_unallowable <-
   nonpersonnel_categorized %>%
-  mutate(across(account_name, \(x) if_else(str_detect(x, "^INT "), "INT PENALTIES", account_name))) %>%
+  mutate(
+    across(account_name, \(x) if_else(str_detect(x, "^INT "), "INT PENALTIES", account_name)),
+    across(account_name, \(x) if_else(x %in% c("ADVERTISING", "MARKETING"), "ADVERTISING AND MARKETING", account_name))
+  ) %>%
   group_by(costcenter_name_clean, account_name) %>%
   summarize(amt_unallowable = sum(amt_unallowable), .groups = "drop") %>%
   filter(amt_unallowable != 0.00) %>%
@@ -324,7 +327,7 @@ schedule_j <-
   schedule_j_indirect %>%
   full_join(schedule_j_unallowable, by = join_by(costcenter_name_clean)) %>%
   mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>%
-  relocate(GENERAL, .after = amt_indirect) %>%
+  # relocate(GENERAL, .after = amt_indirect) %>%
   arrange(costcenter_name_clean)
 
 schedule_j %>% write_xlsx("schedules/schedule_j.xlsx")

@@ -46,7 +46,7 @@ personnel <-
   read_csv(
     "data/csv/personnel.csv",
     col_types = "c",
-    col_select = c(costcenter_clean, costcenter_name_clean, categorization, amt_total)
+    col_select = c(costcenter_clean, costcenter_name_clean, name_clean, title, headcomponent, categorization, amt_total)
   ) %>% 
   mutate(across(amt_total, as.numeric))
 
@@ -62,6 +62,9 @@ cat_po <-
   ) %>%
   distinct(po_number, account, cat_po)
 ```
+
+costcenter_name_clean, categorization,
+    name_clean, title, headcomponent,
 
 # Personnel proportions by cost center
 
@@ -81,6 +84,12 @@ costcenters_missing <-
 ```{r}
 props_costcenter <-
   personnel %>%
+  
+  distinct(
+    costcenter_name_clean, costcenter_clean, categorization,
+    name_clean, title, headcomponent,
+  ) %>% 
+  
   select(!costcenter_name_clean) %>%
   bind_rows(costcenters_missing) %>%
   count(costcenter_clean, categorization) %>%
@@ -105,6 +114,12 @@ Occupancy proportions
 ```{r}
 occupancy_central <- 
   personnel %>%
+  
+  distinct(
+    costcenter_name_clean, costcenter_clean, categorization,
+    name_clean, title, headcomponent,
+  ) %>% 
+  
   filter(
     !(costcenter_clean %in% c("SCHOOLS", "40104", "40231", "40232")),
     !(costcenter_clean == "40077" & categorization == "Direct")
@@ -126,6 +141,12 @@ occupancy_central <-
 
 occupancy_overall <- 
   personnel %>%
+  
+  distinct(
+    costcenter_name_clean, costcenter_clean, categorization,
+    name_clean, title, headcomponent,
+  ) %>% 
+  
   count(categorization) %>%
   mutate(prop = n / sum(n)) %>%
   select(!n) %>%
