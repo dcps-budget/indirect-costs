@@ -90,6 +90,15 @@ ledger <-
 ledger %>% write_parquet(glue("{path_data}/ledger.parquet"))
 ```
 
+```{r}
+costcenters <-
+  ledger %>%
+  distinct(costcenter_name, costcenter_id) %>%
+  arrange(costcenter_name)
+
+costcenters %>% write_xlsx(glue("{path_data}/costcenters.xlsx"))
+```
+
 # Diagnostic
 
 Budgetary basis expenditures from ACFR (thousands): 1391045

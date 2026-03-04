@@ -21,6 +21,14 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 # Import
 
+## School lookup
+
+```{r}
+costcenters <-
+  read_excel(glue("{path_data}/costcenters_categorization.xlsx")) %>%
+  select(costcenter_id, is_school)
+```
+
 ## Ledger
 
 ```{r}
@@ -30,7 +38,16 @@ ledger <-
     account_category == "700000A", # Personnel
     account_id != "7012999", # Non-budgetary
   ) %>%
-  filter(ending_balance != 0.00)
+  filter(ending_balance != 0.00) %>%
+  left_join(costcenters, by = join_by(costcenter_id)) %>%
+  mutate(
+    costcenter_id = if_else(
+      is_school, "SCHOOL", costcenter_id, missing = costcenter_id
+    ),
+    costcenter_name = if_else(
+      is_school, "SCHOOL", costcenter_name, missing = costcenter_name
+    ),
+  )
 
 ledger_rollup <-
   ledger %>%
@@ -49,6 +66,15 @@ data_485_raw <-
   filter(account_id != "spc") %>% # not an account ID
   filter(account_id != "3111003") %>% # not personnel
   filter(account_id != "7016001") %>% # not in ledger; this may change from year to year
+  left_join(costcenters, by = join_by(costcenter_id)) %>%
+  mutate(
+    costcenter_id = if_else(
+      is_school, "SCHOOL", costcenter_id, missing = costcenter_id
+    ),
+    costcenter_name = if_else(
+      is_school, "SCHOOL", costcenter_name, missing = costcenter_name
+    ),
+  ) %>%
   select(!c(row_485))
 
 data_485_raw %>% nrow()
