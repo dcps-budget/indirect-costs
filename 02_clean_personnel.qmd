@@ -25,7 +25,7 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 ```{r}
 costcenters <-
-  read_excel(glue("{path_data}/costcenters_categorization.xlsx")) %>%
+  read_excel(glue("{path_data}/manual/costcenters_categorization.xlsx")) %>%
   select(costcenter_id, is_school)
 ```
 
@@ -33,7 +33,7 @@ costcenters <-
 
 ```{r}
 ledger <-
-  read_parquet(glue("{path_data}/ledger.parquet")) %>%
+  read_parquet(glue("{path_data}/working/ledger.parquet")) %>%
   filter(
     account_category == "700000A", # Personnel
     account_id != "7012999", # Non-budgetary
@@ -62,7 +62,7 @@ ledger_rollup <-
 
 ```{r}
 data_485_raw <-
-  read_parquet(glue("{path_data}/personnel_{year_fiscal}.parquet")) %>%
+  read_parquet(glue("{path_data}/raw/personnel_{year_fiscal}.parquet")) %>%
   filter(account_id != "spc") %>% # not an account ID
   filter(account_id != "3111003") %>% # not personnel
   filter(account_id != "7016001") %>% # not in ledger; this may change from year to year
@@ -83,7 +83,20 @@ data_485_raw %>% nrow()
 ## Manual fixes
 
 ```{r}
-personnel_fix <- read_excel(glue("{path_data}/personnel_fix.xlsx"))
+fix_positions <-
+  read_excel(glue("{path_data}/manual/fix_positions.xlsx")) %>%
+  filter(!is.na(position_title)) %>%
+  distinct(position_id, position_title)
+#
+# personnel_fix_default_position <-
+#   personnel_fix %>%
+#   filter(!is.na(program_name) & program_id != "150011") %>%
+#   distinct(position_id, program_id, program_name, costcenter_id, costcenter_name)
+#
+# personnel_fix_default_employee <-
+#   personnel_fix %>%
+#   filter(!is.na(program_name) & program_id != "150011") %>%
+#   distinct(employee_id, program_id, program_name, costcenter_id, costcenter_name)
 ```
 
 # Tidy
@@ -107,7 +120,7 @@ costcenter_names <-
   ledger %>%
   distinct(costcenter_id, costcenter_name)
 
-position_titles_485 <-
+position_titles <-
   data_485_raw %>%
   filter(!is.na(position_title)) %>%
   distinct(position_id, position_title, pay_end_dt) %>%
@@ -115,14 +128,13 @@ position_titles_485 <-
   select(position_id, position_title)
 
 position_titles <-
-  personnel_fix %>%
-  filter(!is.na(position_title)) %>%
-  filter(!(position_id %in% position_titles_485$position_id)) %>%
-  distinct(position_id, position_title) %>%
-  bind_rows(position_titles_485)
+  fix_positions %>%
+  filter(!(position_id %in% position_titles$position_id)) %>%
+  bind_rows(position_titles)
 
 employee_names <-
   data_485_raw %>%
+  filter(!is.na(employee_name)) %>%
   distinct(employee_id, employee_name, pay_end_dt) %>%
   slice_max(order_by = pay_end_dt, n = 1, by = employee_id) %>%
   select(employee_id, employee_name)
@@ -156,6 +168,11 @@ has_program_position <-
   ) %>%
   select(position_id, program_id, program_name, costcenter_id, costcenter_name)
 
+has_program_position <-
+  # personnel_fix_default_position %>%
+  # filter(!(position_id %in% has_program_position$position_id)) %>%
+  bind_rows(has_program_position)
+
 has_program_employee <-
   data_485 %>%
   filter(!is.na(program_name) & program_id != "150011") %>%
@@ -163,6 +180,11 @@ has_program_employee <-
     order_by = pay_end_dt, n = 1, by = employee_id, with_ties = FALSE
   ) %>%
   select(employee_id, program_id, program_name, costcenter_id, costcenter_name)
+
+has_program_employee <-
+  # personnel_fix_default_employee %>%
+  # filter(!(employee_id %in% has_program_employee$employee_id)) %>%
+  bind_rows(has_program_employee)
 
 program_foundby_position <-
   data_485 %>%
@@ -374,7 +396,8 @@ Sys.time()
 ```{r}
 #| eval: false
 
-personnel_clean %>%
+personnel_bad <-
+  personnel_clean %>%
   mutate(
     bad_program = !(program_id %in% ledger$program_id),
     bad_costcenter = !(costcenter_id %in% ledger$costcenter_id),
@@ -386,25 +409,46 @@ personnel_clean %>%
       bad_program, bad_costcenter, missing_position, missing_employee,
     )
   ) %>%
-  summarize(
-    amount = sum(amt_salary + amt_benefits),
-    .by = c(
-      program_name, program_id,
-      costcenter_name, costcenter_id,
-      position_title, position_id,
-      employee_name, employee_id
-    )
-  ) %>%
-  arrange(
-    costcenter_name, costcenter_id,
+  group_by(
+    bad_program, bad_costcenter, missing_position, missing_employee,
     program_name, program_id,
+    costcenter_name, costcenter_id,
     position_title, position_id,
     employee_name, employee_id
   ) %>%
-  write_xlsx(glue("{path_data}/personnel_bad.xlsx"))
+  summarize(
+    amount = sum(amt_salary + amt_benefits), .groups = "drop"
+  )
 
-personnel_clean %>%
-  distinct(position_id, position_title, costcenter_id, costcenter_name) %>%
-  count(position_title, position_id, sort = TRUE) %>%
-  filter(n > 1)
+personnel_bad %>%
+  filter(bad_program) %>%
+  distinct(
+    position_id, position_title,
+    program_name, program_id, costcenter_name, costcenter_id
+  ) %>%
+  write_xlsx(glue("{path_data}/bad/bad_program.xlsx"))
+
+personnel_bad %>%
+  filter(bad_costcenter) %>%
+  distinct(
+    position_id, position_title,
+    program_name, program_id, costcenter_name, costcenter_id
+  ) %>%
+  write_xlsx(glue("{path_data}/bad/bad_costcenter.xlsx"))
+
+personnel_bad %>%
+  filter(missing_position) %>%
+  distinct(
+    position_id, position_title,
+    program_name, program_id, costcenter_name, costcenter_id
+  ) %>%
+  write_xlsx(glue("{path_data}/bad/missing_position.xlsx"))
+
+personnel_bad %>%
+  filter(missing_employee) %>%
+  distinct(
+    position_id, position_title,
+    program_name, program_id, costcenter_name, costcenter_id
+  ) %>%
+  write_xlsx(glue("{path_data}/bad/missing_employee.xlsx"))
 ```

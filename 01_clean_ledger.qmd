@@ -60,7 +60,7 @@ r023_raw %>%
 # Tidy
 
 ```{r}
-r023_rename <-
+ledger <-
   r023_raw %>%
   clean_names() %>%
   rename(
@@ -76,7 +76,7 @@ r023_rename <-
 
 ```{r}
 ledger <-
-  r023_rename %>%
+  ledger %>%
   mutate(
     is_nonbudgetary = (award_id == "9999998"),
     is_osse = (agency_id == "GD0"),
