@@ -18,17 +18,17 @@ options(scipen = 12, digits = 12)
 path_data <- Sys.getenv("PATH_DATA")
 year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
-path_r209 <- glue("{path_data}/r209_GD0_GA0_{year_fiscal}.xlsx")
-path_r023_ga0 <- glue("{path_data}/r023_expense_GA0_{year_fiscal}.xls")
-path_r023_gd0 <- glue("{path_data}/r023_expense_GD0_{year_fiscal}.xls")
+path_r209 <- glue("{path_data}/raw/r209_GD0_GA0_{year_fiscal}.xlsx")
+path_r023_ga0 <- glue("{path_data}/raw/r023_expense_GA0_{year_fiscal}.xls")
+path_r023_gd0 <- glue("{path_data}/raw/r023_expense_GD0_{year_fiscal}.xls")
 ```
 
 # Import
 
 ```{r}
 r209 <-
-  read_excel(path_r209, col_types = "text", range = "A17:AG3974") %>%
-  clean_names() %>%
+  read_excel(path_r209, col_types = "text", range = "A17:AG3974") |>
+  clean_names() |>
   rename(project_id = project)
 
 r023_ga0 <-
@@ -46,14 +46,14 @@ r023_gd0 <-
   )
 
 r023_raw <-
-  bind_rows(r023_ga0, r023_gd0) %>%
+  bind_rows(r023_ga0, r023_gd0) |>
   filter(Agency == "GA0" | ((Project %in% r209$project_id)))
 ```
 
 "Compiled General Ledger" document for submission
 
 ```{r}
-r023_raw %>%
+r023_raw |>
   write_xlsx(glue("{path_data}/schedules/3.1 Compiled General Ledger.xlsx"))
 ```
 
@@ -61,8 +61,8 @@ r023_raw %>%
 
 ```{r}
 ledger <-
-  r023_raw %>%
-  clean_names() %>%
+  r023_raw |>
+  clean_names() |>
   rename(
     agency_id = agency,
     fund_id = fund_detail, fund_name = fund_detail_desc,
@@ -76,7 +76,7 @@ ledger <-
 
 ```{r}
 ledger <-
-  ledger %>%
+  ledger |>
   mutate(
     is_nonbudgetary = (award_id == "9999998"),
     is_osse = (agency_id == "GD0"),
@@ -87,16 +87,16 @@ ledger <-
 ```
 
 ```{r}
-ledger %>% write_parquet(glue("{path_data}/ledger.parquet"))
+ledger |> write_parquet(glue("{path_data}/working/ledger.parquet"))
 ```
 
 ```{r}
 costcenters <-
-  ledger %>%
-  distinct(costcenter_name, costcenter_id) %>%
+  ledger |>
+  distinct(costcenter_name, costcenter_id) |>
   arrange(costcenter_name)
 
-costcenters %>% write_xlsx(glue("{path_data}/costcenters.xlsx"))
+costcenters |> write_xlsx(glue("{path_data}/working/costcenters.xlsx"))
 ```
 
 # Diagnostic
@@ -104,43 +104,43 @@ costcenters %>% write_xlsx(glue("{path_data}/costcenters.xlsx"))
 Budgetary basis expenditures from ACFR (thousands): 1391045
 
 ```{r}
-ledger %>%
+ledger |>
   filter(
     !is_nonbudgetary, !is_osse, !is_summeradvance, !is_capital, !is_medicaid
-  ) %>%
+  ) |>
   summarize(ending_balance = sum(ending_balance))
 ```
 
 ```{r}
 nonbudgetary <-
-  ledger %>%
-  filter(is_nonbudgetary) %>%
+  ledger |>
+  filter(is_nonbudgetary) |>
   summarize(ending_balance = sum(ending_balance))
 
 osse <-
-  ledger %>%
-  filter(is_osse) %>%
+  ledger |>
+  filter(is_osse) |>
   summarize(ending_balance = sum(ending_balance))
 
 summeradvance <-
-  ledger %>%
-  filter(is_summeradvance) %>%
+  ledger |>
+  filter(is_summeradvance) |>
   summarize(ending_balance = sum(ending_balance))
 
 capital <-
-  ledger %>%
-  filter(is_capital) %>%
+  ledger |>
+  filter(is_capital) |>
   summarize(ending_balance = sum(ending_balance))
 
 medicaid <-
-  ledger %>%
-  filter(is_medicaid) %>%
+  ledger |>
+  filter(is_medicaid) |>
   summarize(ending_balance = sum(ending_balance))
 ```
 
 ```{r}
-ledger %>%
-  summarize(ending_balance = sum(ending_balance)) %>%
+ledger |>
+  summarize(ending_balance = sum(ending_balance)) |>
   bind_rows(
     nonbudgetary,
     osse,
