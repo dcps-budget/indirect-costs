@@ -94,7 +94,6 @@ fix_positions <-
     glue("{path_data}/manual/fix_positions.xlsx"),
     col_types = "text"
   ) |>
-  filter(!is.na(position_title)) |>
   distinct(position_id, position_title)
 
 fix_programs <-
@@ -196,7 +195,6 @@ has_program_employee <-
   ) |>
   select(employee_id, program_id, program_name, costcenter_id, costcenter_name)
 
-
 program_foundby_employee <-
   data_485 |>
   filter(!(position_id %in% program_foundby_position$position_id)) |>
@@ -285,7 +283,6 @@ attributes_imputable <-
   ledger |>
   filter(account_id %in% accounts_missing_485$account_id) |>
   distinct(
-    # fund_id, program_id,
     costcenter_id,
     account_id
   ) |>
@@ -298,7 +295,6 @@ attributes_imputable <-
 rows_need_impute <-
   data_485 |>
   left_join(attributes_imputable, by = join_by(
-    # fund_id, program_id,
     costcenter_id,
   )) |>
   filter(if_any(starts_with("70"))) |>
@@ -354,7 +350,8 @@ personnel_costcenter_account <-
 ledger_costcenter_account |>
   filter(costcenter_id %in% data_485_corrected$costcenter_id) |>
   full_join(
-    personnel_costcenter_account, by = join_by(costcenter_id, account_id)
+    personnel_costcenter_account,
+    by = join_by(costcenter_id, account_id)
   ) |>
   filter(when_any(
     is.na(amount.x),
