@@ -7,11 +7,11 @@ format: html
 
 ```{r}
 library(tidyverse)
-library(arrow)
 library(glue)
 library(janitor)
 library(readxl)
 library(writexl)
+library(arrow)
 
 options(scipen = 12, digits = 12)
 
@@ -21,7 +21,7 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 # Import
 
-## School lookup
+## Cost center lookup
 
 ```{r}
 costcenters <-
@@ -31,12 +31,15 @@ costcenters <-
 
 ## Ledger
 
+Filter for personnel.
+Filter out non-budgetary.
+
 ```{r}
 ledger <-
   read_parquet(glue("{path_data}/working/ledger.parquet")) |>
   filter(
-    account_category == "700000A", # Personnel
-    account_id != "7012999", # Non-budgetary
+    account_category == "700000A",
+    account_id != "7012999",
   ) |>
   left_join(costcenters, by = join_by(costcenter_id)) |>
   mutate(
@@ -48,30 +51,20 @@ ledger <-
     ),
   )
 
-ledger_rollup <-
+ledger_costcenter_account <-
   ledger |>
-  summarize(expense_ledger = sum(ending_balance), .by = c(
-    account_id, account_name,
-  )) |>
-  arrange(account_id) |>
-  filter(expense_ledger != 0.00)
+  summarize(
+    amount = sum(ending_balance),
+    .by = c(costcenter_id, costcenter_name, account_id)
+  ) |>
+  filter(amount != 0.00)
 ```
 
 ## Personnel
 
-Filters and business rules:
-
-* spc:     account column in 485, not an account ID.
-* 3111003: account column in 485, not personnel.
-* 7016001: account column in 485, not present in R023 ledger report.
-** This set may change from year to year.
-
 ```{r}
-data_485_raw <-
+personnel <-
   read_parquet(glue("{path_data}/raw/personnel_{year_fiscal}.parquet")) |>
-  filter(account_id != "spc") |>
-  filter(account_id != "3111003") |>
-  filter(account_id != "7016001") |>
   left_join(costcenters, by = join_by(costcenter_id)) |>
   mutate(
     costcenter_id = if_else(
@@ -83,7 +76,28 @@ data_485_raw <-
   ) |>
   select(!c(row_485))
 
-data_485_raw |> nrow()
+addtnl_rows_costcenter <-
+  ledger_costcenter_account |>
+  filter_out(costcenter_id %in% personnel$costcenter_id) |>
+  mutate(
+    program_id = "000000", program_name = "NO PROGRAM",
+    .before = costcenter_id
+  ) |>
+  mutate(
+    position_id = "00000000", position_title = "NO POSITION",
+    employee_id = "00000000", employee_name = "NO EMPLOYEE",
+    .after = account_id
+  ) |>
+  arrange(costcenter_id, account_id)
+
+personnel <-
+  personnel |>
+  bind_rows(addtnl_rows_costcenter) |>
+  semi_join(ledger_costcenter_account, by = join_by(costcenter_id, account_id))
+
+personnel_costcenter_account <-
+  personnel |>
+  summarize(amount = sum(amount), .by = c(costcenter_id, account_id))
 ```
 
 ## Manual fixes
@@ -108,7 +122,7 @@ fix_programs <-
 
 # Tidy
 
-## Lookup names
+## Standardized names
 
 Make sure that each unique ID corresponds to only one lookup name for:
 * Program name
@@ -116,7 +130,7 @@ Make sure that each unique ID corresponds to only one lookup name for:
 * Position title
 * Employee name
 
-Where possible, use lookup names from ledger, rather than personnel.
+Use end-of-year lookup names from ledger, rather than personnel.
 
 ```{r}
 program_names <-
@@ -128,7 +142,7 @@ costcenter_names <-
   distinct(costcenter_id, costcenter_name)
 
 position_titles <-
-  data_485_raw |>
+  personnel |>
   filter(!is.na(position_title)) |>
   distinct(position_id, position_title, pay_end_dt) |>
   slice_max(order_by = pay_end_dt, n = 1, by = position_id) |>
@@ -140,7 +154,7 @@ position_titles <-
   bind_rows(position_titles)
 
 employee_names <-
-  data_485_raw |>
+  personnel |>
   filter(!is.na(employee_name)) |>
   distinct(employee_id, employee_name, pay_end_dt) |>
   slice_max(order_by = pay_end_dt, n = 1, by = employee_id) |>
@@ -148,8 +162,8 @@ employee_names <-
 ```
 
 ```{r}
-data_485 <-
-  data_485_raw |>
+personnel <-
+  personnel |>
   select(!c(
     program_name,
     costcenter_name,
@@ -162,11 +176,105 @@ data_485 <-
   left_join(employee_names, by = join_by(employee_id))
 ```
 
+## Alignment to ledger
+
+Align personnel amounts to ledger amounts by cost center and account.
+
+Find ledger combinations missing from personnel.
+For these combinations, additional rows will be imputed into personnel.
+
+Find combinations present in ledger and personnel.
+For these combinations, calculate a multiplier so that personnel expenses equal 
+ledger expenses by cost center and account.
+
+```{r}
+personnel_comparison <-
+  ledger_costcenter_account |>
+  rename(amount_ledger = amount) |>
+  full_join(
+    personnel_costcenter_account,
+    by = join_by(costcenter_id, account_id)
+  ) |>
+  arrange(costcenter_id, account_id)
+
+missing_personnel <-
+  personnel_comparison |>
+  filter(is.na(amount)) |>
+  select(costcenter_id, account_id, amount_ledger) |>
+  arrange(costcenter_id, account_id)
+
+multipliers <-
+  personnel_comparison |>
+  filter(!is.na(amount)) |>
+  mutate(multiplier = amount_ledger / amount) |>
+  select(costcenter_id, account_id, multiplier) |>
+  arrange(costcenter_id, account_id)
+```
+
+Impute missing combinations for cost center and account.
+
+```{r}
+attributes_imputable <-
+  missing_personnel |>
+  select(costcenter_id, account_id) |>
+  mutate(is_imputed = TRUE) |>
+  pivot_wider(
+    names_from = account_id, names_sort = TRUE, values_from = is_imputed
+  ) |>
+  arrange(costcenter_id)
+
+rows_need_impute <-
+  personnel |>
+  select(!c(account_id, amount)) |>
+  filter(costcenter_id %in% missing_personnel$costcenter_id) |>
+  distinct() |>
+  left_join(attributes_imputable, by = join_by(costcenter_id)) |>
+  filter(if_any(starts_with("70"))) |>
+  pivot_longer(
+    cols = starts_with("70"),
+    names_to = "account_id", values_to = "is_imputed", values_drop_na = TRUE
+  ) |>
+  select(!is_imputed)
+
+amounts_impute <-
+  rows_need_impute |>
+  count(costcenter_id, account_id) |>
+  left_join(missing_personnel, by = join_by(costcenter_id, account_id)) |>
+  mutate(amount = amount_ledger / n) |>
+  select(costcenter_id, account_id, amount) |>
+  arrange(costcenter_id, account_id)
+```
+
+```{r}
+personnel_corrected <-
+  personnel |>
+  left_join(multipliers, by = join_by(costcenter_id, account_id)) |>
+  filter(!is.na(multiplier)) |>
+  mutate(amount = amount * multiplier) |>
+  select(!multiplier) |>
+  bind_rows(
+    left_join(
+      rows_need_impute, amounts_impute,
+      by = join_by(costcenter_id, account_id)
+    )
+  )
+
+personnel_corrected |>
+  pull(amount) |>
+  sum()
+
+ledger |>
+  pull(ending_balance) |>
+  sum()
+```
+
 ## Payroll default
 
 Find correct programs and cost centers for payroll default records.
 
 ```{r}
+#| eval: false
+
 has_program_position <-
   data_485 |>
   filter(!is.na(program_name) & program_id != "150011") |>
@@ -205,6 +313,8 @@ program_foundby_employee <-
 ```
 
 ```{r}
+#| eval: false
+
 data_485_foundby_position <-
   data_485 |>
   filter(is.na(program_name) | program_id == "150011") |>
@@ -238,132 +348,6 @@ data_485 <-
 data_485 |> nrow()
 ```
 
-## Alignment to ledger
-
-Compare accounts in ledger to accounts in 485.
-
-Find ledger accounts missing from 485.
-For these accounts, additional rows will be imputed into the 485.
-
-Find accounts present in ledger and in 485.
-For these accounts, a multiplier will calculated per account so that personnel 
-spending in the 485 equals personnel spending in the ledger.
-
-```{r}
-personnel_rollup <-
-  data_485 |>
-  summarize(expense_485 = sum(amount), .by = c(
-    account_id
-  )) |>
-  arrange(account_id) |>
-  filter(expense_485 != 0.00)
-
-personnel_comparison <-
-  ledger_rollup |>
-  full_join(personnel_rollup, by = join_by(
-    account_id
-  ))
-
-accounts_missing_485 <-
-  personnel_comparison |>
-  filter(is.na(expense_485)) |>
-  select(account_id, expense_ledger)
-
-multipliers <-
-  personnel_comparison |>
-  filter(!is.na(expense_485)) |>
-  mutate(multiplier = expense_ledger / expense_485) |>
-  select(account_id, multiplier)
-```
-
-Impute
-
-```{r}
-attributes_imputable <-
-  ledger |>
-  filter(account_id %in% accounts_missing_485$account_id) |>
-  distinct(
-    costcenter_id,
-    account_id
-  ) |>
-  mutate(is_imputed = TRUE) |>
-  pivot_wider(
-    names_from = account_id, names_sort = TRUE,
-    values_from = is_imputed
-  )
-
-rows_need_impute <-
-  data_485 |>
-  left_join(attributes_imputable, by = join_by(
-    costcenter_id,
-  )) |>
-  filter(if_any(starts_with("70"))) |>
-  select(!c(amount, account_id)) |>
-  pivot_longer(
-    cols = starts_with("70"),
-    names_to = "account_id", values_to = "is_imputed", values_drop_na = TRUE
-  ) |>
-  select(!is_imputed)
-
-amounts_impute <-
-  rows_need_impute |>
-  count(account_id) |>
-  left_join(accounts_missing_485, by = join_by(account_id)) |>
-  mutate(amount = expense_ledger / n) |>
-  select(account_id, amount) |>
-  arrange(account_id)
-
-rows_imputed <-
-  rows_need_impute |>
-  left_join(amounts_impute, by = join_by(account_id))
-```
-
-```{r}
-data_485_corrected <-
-  data_485 |>
-  left_join(multipliers, by = join_by(account_id)) |>
-  mutate(amount = amount * multiplier) |>
-  select(!multiplier) |>
-  bind_rows(rows_imputed) |>
-  filter(account_id %in% personnel_comparison$account_id)
-
-data_485_corrected |>
-  pull(amount) |>
-  sum()
-
-ledger |>
-  pull(ending_balance) |>
-  sum()
-```
-
-```{r}
-ledger_costcenter_account <-
-  ledger |>
-  summarize(amount = sum(ending_balance), .by = c(costcenter_id, account_id)) |>
-  filter(amount != 0.00)
-
-personnel_costcenter_account <-
-  data_485_corrected |>
-  summarize(amount = sum(amount), .by = c(costcenter_id, account_id)) |>
-  filter(amount != 0.00)
-
-ledger_costcenter_account |>
-  filter(costcenter_id %in% data_485_corrected$costcenter_id) |>
-  full_join(
-    personnel_costcenter_account,
-    by = join_by(costcenter_id, account_id)
-  ) |>
-  filter(when_any(
-    is.na(amount.x),
-    is.na(amount.y)
-  )) |>
-  arrange(account_id, costcenter_id)
-
-ledger |>
-  distinct(costcenter_id, costcenter_name) |>
-  filter_out(costcenter_id %in% data_485_corrected$costcenter_id)
-```
-
 # Transform
 
 Roll up to cost center and program.
@@ -371,7 +355,7 @@ Add columns for salary, benefits, and terminal leave.
 
 ```{r}
 personnel_clean <-
-  data_485_corrected |>
+  personnel_corrected |>
   mutate(amt_salary = case_when(
     str_starts(account_id, "7011") ~ amount,
     str_starts(account_id, "7012") ~ amount,
