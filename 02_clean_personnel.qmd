@@ -35,12 +35,8 @@ Filter for personnel.
 Filter out non-budgetary.
 
 ```{r}
-ledger <-
+ledger_full <-
   read_parquet(glue("{path_data}/working/ledger.parquet")) |>
-  filter(
-    account_category == "700000A",
-    account_id != "7012999",
-  ) |>
   left_join(costcenters, by = join_by(costcenter_id)) |>
   mutate(
     costcenter_id = if_else(
@@ -51,13 +47,12 @@ ledger <-
     ),
   )
 
-ledger_costcenter_account <-
-  ledger |>
-  summarize(
-    amount = sum(ending_balance),
-    .by = c(costcenter_id, costcenter_name, account_id)
-  ) |>
-  filter(amount != 0.00)
+ledger_personnel <-
+  ledger_full |>
+  filter(
+    account_category == "700000A",
+    account_id != "7012999",
+  )
 ```
 
 ## Personnel
@@ -74,30 +69,17 @@ personnel <-
       is_school, "SCHOOL", costcenter_name, missing = costcenter_name
     ),
   ) |>
+  mutate(
+    costcenter_id = if_else(
+      program_id == "150011", "PAYROLL DEFAULT", costcenter_id
+    ),
+    costcenter_name = if_else(
+      program_id == "150011", "PAYROLL DEFAULT", costcenter_name
+    ),
+  ) |>
   select(!c(row_485))
 
-addtnl_rows_costcenter <-
-  ledger_costcenter_account |>
-  filter_out(costcenter_id %in% personnel$costcenter_id) |>
-  mutate(
-    program_id = "000000", program_name = "NO PROGRAM",
-    .before = costcenter_id
-  ) |>
-  mutate(
-    position_id = "00000000", position_title = "NO POSITION",
-    employee_id = "00000000", employee_name = "NO EMPLOYEE",
-    .after = account_id
-  ) |>
-  arrange(costcenter_id, account_id)
-
-personnel <-
-  personnel |>
-  bind_rows(addtnl_rows_costcenter) |>
-  semi_join(ledger_costcenter_account, by = join_by(costcenter_id, account_id))
-
-personnel_costcenter_account <-
-  personnel |>
-  summarize(amount = sum(amount), .by = c(costcenter_id, account_id))
+personnel |> nrow()
 ```
 
 ## Manual fixes
@@ -124,6 +106,24 @@ fix_programs <-
 
 ## Standardized names
 
+```{r}
+program_names <-
+  personnel |>
+  distinct(program_id, program_name) |>
+  filter_out(program_id %in% ledger_full$program_id) |>
+  bind_rows(
+    ledger_full |> distinct(program_id, program_name),
+  )
+
+costcenter_names <-
+  personnel |>
+  distinct(costcenter_id, costcenter_name) |>
+  filter_out(costcenter_id %in% ledger_full$costcenter_id) |>
+  bind_rows(
+    ledger_full |> distinct(costcenter_id, costcenter_name),
+  )
+```
+
 Make sure that each unique ID corresponds to only one lookup name for:
 * Program name
 * Cost center name
@@ -133,14 +133,6 @@ Make sure that each unique ID corresponds to only one lookup name for:
 Use end-of-year lookup names from ledger, rather than personnel.
 
 ```{r}
-program_names <-
-  ledger |>
-  distinct(program_id, program_name)
-
-costcenter_names <-
-  ledger |>
-  distinct(costcenter_id, costcenter_name)
-
 position_titles <-
   personnel |>
   filter(!is.na(position_title)) |>
@@ -176,6 +168,79 @@ personnel <-
   left_join(employee_names, by = join_by(employee_id))
 ```
 
+## Missing programs
+
+Find correct programs to replace values missing from ledger.
+
+```{r}
+#| eval: true
+
+has_program_position <-
+  personnel |>
+  filter(!is.na(program_name) & program_id != "150011") |>
+  slice_max(
+    order_by = pay_end_dt, n = 1, by = position_id, with_ties = FALSE
+  ) |>
+  select(position_id, program_id, program_name, costcenter_id, costcenter_name)
+
+has_program_employee <-
+  personnel |>
+  filter(!is.na(program_name) & program_id != "150011") |>
+  slice_max(
+    order_by = pay_end_dt, n = 1, by = employee_id, with_ties = FALSE
+  ) |>
+  select(employee_id, program_id, program_name, costcenter_id, costcenter_name)
+
+program_foundby_position <-
+  personnel |>
+  filter(is.na(program_name) | program_id == "150011") |>
+  filter(position_id %in% has_program_position$position_id) |>
+  distinct(position_id) |>
+  left_join(has_program_position, by = join_by(position_id))
+
+program_foundby_employee <-
+  personnel |>
+  filter(!(position_id %in% program_foundby_position$position_id)) |>
+  filter(is.na(program_name) | program_id == "150011") |>
+  filter(employee_id %in% has_program_employee$employee_id) |>
+  distinct(employee_id) |>
+  left_join(has_program_employee, by = join_by(employee_id))
+
+personnel_foundby_position <-
+  personnel |>
+  filter(is.na(program_name) | program_id == "150011") |>
+  filter(position_id %in% program_foundby_position$position_id) |>
+  select(!c(program_id, program_name, costcenter_id, costcenter_name)) |>
+  left_join(program_foundby_position, by = join_by(position_id))
+
+personnel_foundby_employee <-
+  personnel |>
+  filter(!(position_id %in% program_foundby_position$position_id)) |>
+  filter(is.na(program_name) | program_id == "150011") |>
+  filter(employee_id %in% program_foundby_employee$employee_id) |>
+  select(!c(program_id, program_name, costcenter_id, costcenter_name)) |>
+  left_join(program_foundby_employee, by = join_by(employee_id))
+
+personnel_notfound <-
+  personnel |>
+  filter(is.na(program_name) | program_id == "150011") |>
+  filter(!(position_id %in% program_foundby_position$position_id)) |>
+  filter(!(employee_id %in% program_foundby_employee$employee_id))
+
+personnel <-
+  personnel |>
+  filter(!is.na(program_name) & program_id != "150011") |>
+  bind_rows(
+    personnel_foundby_position,
+    personnel_foundby_employee,
+    personnel_notfound
+  )
+```
+
+```{r}
+personnel |> nrow()
+```
+
 ## Alignment to ledger
 
 Align personnel amounts to ledger amounts by cost center and account.
@@ -186,6 +251,39 @@ For these combinations, additional rows will be imputed into personnel.
 Find combinations present in ledger and personnel.
 For these combinations, calculate a multiplier so that personnel expenses equal 
 ledger expenses by cost center and account.
+
+```{r}
+ledger_costcenter_account <-
+  ledger_personnel |>
+  summarize(
+    amount = sum(ending_balance),
+    .by = c(costcenter_id, costcenter_name, account_id)
+  ) |>
+  filter(amount != 0.00 | costcenter_id == "PAYROLL DEFAULT")
+
+addtnl_rows_costcenter <-
+  ledger_costcenter_account |>
+  filter_out(costcenter_id %in% personnel$costcenter_id) |>
+  mutate(
+    program_id = "000000", program_name = "NO PROGRAM",
+    .before = costcenter_id
+  ) |>
+  mutate(
+    position_id = "00000000", position_title = "NO POSITION",
+    employee_id = "00000000", employee_name = "NO EMPLOYEE",
+    .after = account_id
+  ) |>
+  arrange(costcenter_id, account_id)
+
+personnel <-
+  personnel |>
+  bind_rows(addtnl_rows_costcenter) |>
+  semi_join(ledger_costcenter_account, by = join_by(costcenter_id, account_id))
+
+personnel_costcenter_account <-
+  personnel |>
+  summarize(amount = sum(amount), .by = c(costcenter_id, account_id))
+```
 
 ```{r}
 personnel_comparison <-
@@ -246,10 +344,9 @@ amounts_impute <-
 ```
 
 ```{r}
-personnel_corrected <-
+personnel_aligned <-
   personnel |>
   left_join(multipliers, by = join_by(costcenter_id, account_id)) |>
-  filter(!is.na(multiplier)) |>
   mutate(amount = amount * multiplier) |>
   select(!multiplier) |>
   bind_rows(
@@ -259,93 +356,13 @@ personnel_corrected <-
     )
   )
 
-personnel_corrected |>
+ledger_costcenter_account |>
   pull(amount) |>
   sum()
 
-ledger |>
-  pull(ending_balance) |>
+personnel_aligned |>
+  pull(amount) |>
   sum()
-```
-
-## Payroll default
-
-Find correct programs and cost centers for payroll default records.
-
-```{r}
-#| eval: false
-
-has_program_position <-
-  data_485 |>
-  filter(!is.na(program_name) & program_id != "150011") |>
-  slice_max(
-    order_by = pay_end_dt, n = 1, by = position_id, with_ties = FALSE
-  ) |>
-  select(position_id, program_id, program_name, costcenter_id, costcenter_name)
-
-has_program_position <-
-  fix_programs |>
-  filter(!(position_id %in% has_program_position$position_id)) |>
-  bind_rows(has_program_position)
-
-program_foundby_position <-
-  data_485 |>
-  filter(is.na(program_name) | program_id == "150011") |>
-  filter(position_id %in% has_program_position$position_id) |>
-  distinct(position_id) |>
-  left_join(has_program_position, by = join_by(position_id))
-
-has_program_employee <-
-  data_485 |>
-  filter(!is.na(program_name) & program_id != "150011") |>
-  slice_max(
-    order_by = pay_end_dt, n = 1, by = employee_id, with_ties = FALSE
-  ) |>
-  select(employee_id, program_id, program_name, costcenter_id, costcenter_name)
-
-program_foundby_employee <-
-  data_485 |>
-  filter(!(position_id %in% program_foundby_position$position_id)) |>
-  filter(is.na(program_name) | program_id == "150011") |>
-  filter(employee_id %in% has_program_employee$employee_id) |>
-  distinct(employee_id) |>
-  left_join(has_program_employee, by = join_by(employee_id))
-```
-
-```{r}
-#| eval: false
-
-data_485_foundby_position <-
-  data_485 |>
-  filter(is.na(program_name) | program_id == "150011") |>
-  filter(position_id %in% program_foundby_position$position_id) |>
-  select(!c(program_id, program_name, costcenter_id, costcenter_name)) |>
-  left_join(program_foundby_position, by = join_by(position_id))
-
-data_485_foundby_employee <-
-  data_485 |>
-  filter(!(position_id %in% program_foundby_position$position_id)) |>
-  filter(is.na(program_name) | program_id == "150011") |>
-  filter(employee_id %in% program_foundby_employee$employee_id) |>
-  select(!c(program_id, program_name, costcenter_id, costcenter_name)) |>
-  left_join(program_foundby_employee, by = join_by(employee_id))
-
-data_485_notfound <-
-  data_485 |>
-  filter(is.na(program_name) | program_id == "150011") |>
-  filter(!(position_id %in% program_foundby_position$position_id)) |>
-  filter(!(employee_id %in% program_foundby_employee$employee_id))
-
-data_485 <-
-  data_485 |>
-  filter(!is.na(program_name) & program_id != "150011") |>
-  bind_rows(
-    data_485_foundby_position,
-    data_485_foundby_employee,
-    data_485_notfound
-  )
-
-data_485 |> nrow()
 ```
 
 # Transform
@@ -355,7 +372,7 @@ Add columns for salary, benefits, and terminal leave.
 
 ```{r}
 personnel_clean <-
-  personnel_corrected |>
+  personnel_aligned |>
   mutate(amt_salary = case_when(
     str_starts(account_id, "7011") ~ amount,
     str_starts(account_id, "7012") ~ amount,
@@ -409,8 +426,8 @@ personnel_clean |>
 personnel_bad <-
   personnel_clean |>
   mutate(
-    bad_program = !(program_id %in% ledger$program_id) | program_id == "150011",
-    bad_costcenter = !(costcenter_id %in% ledger$costcenter_id),
+    bad_program = is.na(program_name) | program_id == "150011",
+    bad_costcenter = is.na(costcenter_name),
     missing_position = is.na(position_title),
     missing_employee = is.na(employee_name)
   ) |>

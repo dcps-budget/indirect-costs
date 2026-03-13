@@ -47,14 +47,25 @@ r023_gd0 <-
 
 r023_raw <-
   bind_rows(r023_ga0, r023_gd0) |>
-  filter(Agency == "GA0" | ((Project %in% r209$project_id)))
+  filter(Agency == "GA0" | ((Project %in% r209$project_id))) |>
+  mutate(
+    `Cost Center` = if_else(
+      `Program` == "150011", "PAYROLL DEFAULT", `Cost Center`
+    ),
+    `Cost Center Desc` = if_else(
+      `Program` == "150011", "PAYROLL DEFAULT", `Cost Center Desc`
+    ),
+  )
 ```
 
 "Compiled General Ledger" document for submission
 
 ```{r}
 r023_raw |>
-  write_xlsx(glue("{path_data}/schedules/3.1 Compiled General Ledger.xlsx"))
+  write_csv(
+    glue("{path_data}/schedules/3.1 Compiled General Ledger.csv"),
+    na = ""
+  )
 ```
 
 # Tidy
@@ -96,7 +107,7 @@ costcenters <-
   distinct(costcenter_name, costcenter_id) |>
   arrange(costcenter_name)
 
-costcenters |> write_xlsx(glue("{path_data}/working/costcenters.xlsx"))
+costcenters |> write_xlsx(glue("{path_data}/working/costcenters.csv"))
 ```
 
 # Diagnostic
@@ -108,7 +119,7 @@ ledger |>
   filter(
     !is_nonbudgetary, !is_osse, !is_summeradvance, !is_capital, !is_medicaid
   ) |>
-  summarize(ending_balance = sum(ending_balance))
+  summarize(ending_balance = sum(ending_balance) %/% 1000)
 ```
 
 ```{r}
