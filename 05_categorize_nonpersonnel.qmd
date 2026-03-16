@@ -3,34 +3,20 @@ title: "Categorize Non-Personnel"
 format: html
 ---
 
+# Setup
+
 ```{r}
 library(tidyverse)
 library(glue)
 library(janitor)
 library(readxl)
 library(writexl)
+library(arrow)
 
 options(scipen = 12, digits = 12)
-```
 
-# Setup
-
-```{r}
-path_data <- glue(
-  "C:/Users",
-  "{Sys.getenv('USERNAME')}",
-  "OneDrive - District of Columbia Public Schools",
-  "Data",
-  .sep = "/"
-)
-
-path_working <- glue(
-  "C:/Users",
-  "{Sys.getenv('USERNAME')}",
-  "OneDrive - District of Columbia Public Schools",
-  "Working Files - Indirect Cost",
-  .sep = "/"
-)
+path_data <- Sys.getenv("PATH_DATA")
+year_fiscal <- Sys.getenv("YEAR_FISCAL")
 ```
 
 # Import

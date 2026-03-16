@@ -21,7 +21,7 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 # Import
 
-## Cost center lookup
+## Cost center categorization
 
 ```{r}
 costcenters <-
@@ -91,15 +91,6 @@ fix_positions <-
     col_types = "text"
   ) |>
   distinct(position_id, position_title)
-
-fix_programs <-
-  read_excel(
-    glue("{path_data}/manual/fix_programs.xlsx"),
-    col_types = "text"
-  ) |>
-  distinct(
-    position_id, program_id, program_name, costcenter_id, costcenter_name
-  )
 ```
 
 # Tidy
@@ -173,8 +164,6 @@ personnel <-
 Find correct programs to replace values missing from ledger.
 
 ```{r}
-#| eval: true
-
 has_program_position <-
   personnel |>
   filter(!is.na(program_name) & program_id != "150011") |>
@@ -243,14 +232,14 @@ personnel |> nrow()
 
 ## Alignment to ledger
 
-Align personnel amounts to ledger amounts by cost center and account.
+Align personnel amounts to ledger amounts.
 
 Find ledger combinations missing from personnel.
 For these combinations, additional rows will be imputed into personnel.
 
 Find combinations present in ledger and personnel.
 For these combinations, calculate a multiplier so that personnel expenses equal 
-ledger expenses by cost center and account.
+ledger expenses.
 
 ```{r}
 ledger_costcenter_account <-
@@ -354,7 +343,8 @@ personnel_aligned <-
       rows_need_impute, amounts_impute,
       by = join_by(costcenter_id, account_id)
     )
-  )
+  ) |>
+  filter(amount != 0.00)
 
 ledger_costcenter_account |>
   pull(amount) |>

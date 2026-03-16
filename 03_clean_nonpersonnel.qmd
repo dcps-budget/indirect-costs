@@ -3,113 +3,126 @@ title: "Clean Non-Personnel"
 format: html
 ---
 
+# Setup
+
 ```{r}
 library(tidyverse)
 library(glue)
 library(janitor)
 library(readxl)
 library(writexl)
+library(arrow)
 
 options(scipen = 12, digits = 12)
-```
 
-# Setup
+path_data <- Sys.getenv("PATH_DATA")
+year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
-```{r}
-path_data <- glue(
-  "C:/Users",
-  "{Sys.getenv('USERNAME')}",
-  "OneDrive - District of Columbia Public Schools",
-  "Data",
-  .sep = "/"
-)
-
-path_working <- glue(
-  "C:/Users",
-  "{Sys.getenv('USERNAME')}",
-  "OneDrive - District of Columbia Public Schools",
-  "Working Files - Indirect Cost",
-  .sep = "/"
-)
-
-fy <- "2024"
-
-dir_r051a <- glue("{path_data}/Journal Entries/R051A/raw/{fy}")
-
+path_r209 <- glue("{path_data}/raw/r209_GD0_GA0_{year_fiscal}.xlsx")
 path_r051a_ga0 <-
-  glue("{dir_r051a}/r051a_expense_71_GA0_{fy}.xlsx")
-
+  glue("{path_data}/raw/r051a_expense_71_GA0_{year_fiscal}.xlsx")
 path_r051a_gd0 <-
-  glue("{dir_r051a}/r051a_expense_71_GD0_{fy}.xlsx")
-
-path_r209 <-
-  glue("{path_data}/Budget/R209/raw/{fy}/r209_GD0_GA0_{fy}.xlsx")
+  glue("{path_data}/raw/r051a_expense_71_GD0_{year_fiscal}.xlsx")
 ```
 
 # Import
 
+## Cost center categorization
+
 ```{r}
 costcenters <-
-  read_excel(glue("{path_working}/Cost Centers.xlsx"), col_types = "text") %>%
-  clean_names() %>%
-  select(!costcenter_name)
-
-pos_cat_prev <-
-  read_excel(
-    glue("{path_working}/Previous Categorization - PO.xlsx"),
-    col_types = "text"
-  ) %>%
-  clean_names() %>%
-  mutate(across(po_number, str_squish)) %>%
-  distinct(po_number, po_categorization_previous)
-
-grants <- 
-  read_excel(
-    glue("{path_working}/Grants good.xlsx"),
-    col_types = c(rep("text", 3), "logical")
-  )
+  read_excel(glue("{path_data}/manual/costcenters_categorization.xlsx")) |>
+  select(costcenter_id, is_school)
 ```
 
 ```{r}
-programs <- read_excel("data/programs.xlsx")
+# pos_cat_prev <-
+#   read_excel(
+#     glue("{path_working}/Previous Categorization - PO.xlsx"),
+#     col_types = "text"
+#   ) |>
+#   clean_names() |>
+#   mutate(across(po_number, str_squish)) |>
+#   distinct(po_number, po_categorization_previous)
+#
+# grants <-
+#   read_excel(
+#     glue("{path_working}/Grants good.xlsx"),
+#     col_types = c(rep("text", 3), "logical")
+#   )
+```
 
-pos <- read_excel("data/pos.xlsx")
+```{r}
+# programs <- read_excel("data/programs.xlsx")
+#
+# pos <- read_excel("data/pos.xlsx")
 ```
 
 ```{r}
 r209 <-
-  read_excel(path_r209, col_types = "text", range = "A17:AG5216") %>%
-  clean_names()
+  read_excel(path_r209, range = "A17:AG3974", col_types = "text") |>
+  clean_names() |>
+  rename(project_id = project)
 
 r051a_ga0 <-
-  read_excel(path_r051a_ga0, col_types = "text", range = "A12:AT66121") %>%
+  read_excel(
+    path_r051a_ga0,
+    range = "A13:AU46857",
+    col_types = c(rep("text", 36), rep("numeric", 3), rep("text", 8))
+  ) |>
   clean_names()
 
 r051a_gd0 <-
-  read_excel(path_r051a_gd0, col_types = "text", range = "A12:AT69603") %>%
+  read_excel(
+    path_r051a_gd0,
+    range = "A13:AU60710",
+    col_types = c(rep("text", 36), rep("numeric", 3), rep("text", 8))
+  ) |>
   clean_names()
-
-r051a <- bind_rows(r051a_ga0, r051a_gd0)
 ```
 
 # Tidy
 
 ```{r}
-r051a_rename <-
-  r051a %>%
+nonpersonnel <-
+  bind_rows(r051a_ga0, r051a_gd0) |>
   rename(
-    costcenter_name = cost_center_desc, costcenter = cost_center,
-    program_name = program_desc, program = program,
-    account_name = account_desc, account = account
+    agency_id = agency,
+    program_id = program, program_name = program_desc,
+    costcenter_id = cost_center, costcenter_name = cost_center_desc,
+    account_id = account, account_name = account_desc,
+    project_id = project, project_name = project_desc,
+    award_id = award, award_name = award_desc
+  ) |>
+  filter(agency_id == "GA0" | ((project_id %in% r209$project_id))) |>
+  left_join(costcenters, by = join_by(costcenter_id)) |>
+  mutate(
+    costcenter_id = if_else(
+      is_school, "SCHOOL", costcenter_id, missing = costcenter_id
+    ),
+    costcenter_name = if_else(
+      is_school, "SCHOOL", costcenter_name, missing = costcenter_name
+    ),
   )
-```
 
-```{r}
-costcenters_remove <- c(
-  "10041",
-  "10086",
-  "30077"
-)
+nonpersonnel_costcenter_account <-
+  nonpersonnel |>
+  summarize(
+    net_accounted = sum(net_accounted),
+    .by = c(costcenter_id, account_id)
+  ) |>
+  filter(net_accounted != 0.00)
+
+nonpersonnel <-
+  nonpersonnel |>
+  semi_join(
+    nonpersonnel_costcenter_account,
+    by = join_by(costcenter_id, account_id)
+  )
+
+nonpersonnel |>
+  pull(net_accounted) |>
+  sum()
 ```
 
 ```{r}
@@ -134,67 +147,47 @@ services_excluded <- c(
 ```
 
 ```{r}
-r051a_clean <-
-  r051a_rename %>%
-  filter(
-    agency == "GA0" | ((project %in% r209$project) & project != "401750")
-  ) %>%
-  filter(!(costcenter %in% costcenters_remove)) %>%
-  mutate(across(net_accounted, \(x) as.numeric(x))) %>%
+nonpersonnel_clean <-
+  nonpersonnel |>
   mutate(po_number = str_extract(
     transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
-  )) %>%
-  mutate(is_po = !is.na(po_number)) %>%
+  )) |>
+  mutate(is_po = !is.na(po_number)) |>
   mutate(
-    is_service =
-      str_detect(account_parent_1, "^713[12]") &
-        !(account %in% services_excluded)
-  )
+    is_service = when_all(
+      str_detect(account_parent_1, "^713[12]"),
+      !(account_id %in% services_excluded)
+    )
+  ) |>
+  mutate(is_capital = case_when(
+    appropriation_fund == "3030" ~ TRUE,
+    .default = FALSE
+  ))
 ```
 
 # Transform
 
 ```{r}
-r051a_aug <-
-  r051a_clean %>%
-  left_join(costcenters, by = join_by(costcenter)) %>%
-  left_join(programs, by = join_by(program)) %>%
-  left_join(pos, by = join_by(po_number)) %>%
-  left_join(pos_cat_prev, by = join_by(po_number)) %>%
-  mutate(costcenter_clean = case_when(
-    is.na(costcenter_clean) ~ costcenter,
-    .default = costcenter_clean
-  )) %>%
-  mutate(costcenter_name_clean = case_when(
-    is.na(costcenter_name_clean) ~ costcenter_name,
-    .default = costcenter_name_clean
-  )) %>%
-  mutate(is_capital = case_when(
-    appropriation_fund == "3030" ~ TRUE,
-    .default = FALSE
-  )) %>% 
-  mutate(is_grant = case_when(
-    award == "1000074" & project == "400308" ~ TRUE,
-    award != "1000074" & (award %in% grants$award_current) ~ TRUE,
-    award != "1000074" & (award %in% grants$award_carryover) ~ TRUE,
-    .default = FALSE
-  )) %>% 
-  select(
-    fund, award,
-    costcenter_name_clean, costcenter_clean,
-    program_2_name, program_2, program_name, program,
-    account_name, account,
-    net_accounted,
-    is_capital, is_grant,
-    party_name, is_service, is_po,
-    po_number, po_title, po_line_item_description,
-    po_categorization_previous
-  )
+# r051a_aug <-
+#   r051a_clean |>
+# left_join(costcenters, by = join_by(costcenter)) |>
+# left_join(programs, by = join_by(program)) |>
+# left_join(pos, by = join_by(po_number)) |>
+# left_join(pos_cat_prev, by = join_by(po_number)) |>
+# mutate(is_grant = case_when(
+#   award == "1000074" & project == "400308" ~ TRUE,
+#   award != "1000074" & (award %in% grants$award_current) ~ TRUE,
+#   award != "1000074" & (award %in% grants$award_carryover) ~ TRUE,
+#   .default = FALSE
+# ))
 ```
 
 
 ```{r}
-r051a_aug %>% write_csv("data/csv/nonpersonnel.csv", na = "")
+nonpersonnel_clean |>
+  write_parquet(glue("{path_data}/working/nonpersonnel_clean.parquet"))
+nonpersonnel_clean |>
+  write_csv(glue("{path_data}/working/nonpersonnel_clean.csv"), na = "")
 ```
 
 Write out PO's for review
@@ -205,9 +198,7 @@ Write out PO's for review
 # Diagnostics
 
 ```{r}
-r051a_aug %>%
-  group_by(costcenter_name_clean, costcenter_clean) %>%
-  summarize(net_accounted = sum(net_accounted), .groups = "drop")
+nonpersonnel_clean
 ```
 
 ```{r}
