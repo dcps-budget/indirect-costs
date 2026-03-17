@@ -17,12 +17,6 @@ options(scipen = 12, digits = 12)
 
 path_data <- Sys.getenv("PATH_DATA")
 year_fiscal <- Sys.getenv("YEAR_FISCAL")
-
-path_r209 <- glue("{path_data}/raw/r209_GD0_GA0_{year_fiscal}.xlsx")
-path_r051a_ga0 <-
-  glue("{path_data}/raw/r051a_expense_71_GA0_{year_fiscal}.xlsx")
-path_r051a_gd0 <-
-  glue("{path_data}/raw/r051a_expense_71_GD0_{year_fiscal}.xlsx")
 ```
 
 # Import
@@ -50,42 +44,62 @@ costcenters <-
 #     glue("{path_working}/Grants good.xlsx"),
 #     col_types = c(rep("text", 3), "logical")
 #   )
-```
 
-```{r}
 # programs <- read_excel("data/programs.xlsx")
-#
-# pos <- read_excel("data/pos.xlsx")
 ```
 
 ```{r}
-r209 <-
-  read_excel(path_r209, range = "A17:AG3974", col_types = "text") |>
-  clean_names() |>
-  rename(project_id = project)
-
-r051a_ga0 <-
+nonpersonnel_ga0 <-
   read_excel(
-    path_r051a_ga0,
+    glue("{path_data}/raw/r051a_expense_71_GA0_{year_fiscal}.xlsx"),
     range = "A13:AU46857",
     col_types = c(rep("text", 36), rep("numeric", 3), rep("text", 8))
-  ) |>
-  clean_names()
+  )
 
-r051a_gd0 <-
+nonpersonnel_gd0 <-
   read_excel(
-    path_r051a_gd0,
+    glue("{path_data}/raw/r051a_expense_71_GD0_{year_fiscal}.xlsx"),
     range = "A13:AU60710",
     col_types = c(rep("text", 36), rep("numeric", 3), rep("text", 8))
+  )
+
+r209 <-
+  read_excel(
+    glue("{path_data}/raw/r209_GD0_GA0_{year_fiscal}.xlsx"),
+    range = "A17:AG3974",
+    col_types = "text"
   ) |>
-  clean_names()
+  clean_names() |>
+  rename(project_id = project)
+```
+
+```{r}
+po <-
+  read_excel(
+    glue("{path_data}/raw/r304_2022_2026.xls"),
+    range = "A9:AP40408",
+    col_types = "text"
+  ) |>
+  clean_names() |>
+  summarize(
+    supplier_names = str_flatten(
+      sort(unique(supplier_name)),
+      collapse = "; "
+    ),
+    item_descriptions = str_flatten(
+      sort(unique(item_description)),
+      collapse = "; "
+    ),
+    .by = po_number
+  )
 ```
 
 # Tidy
 
 ```{r}
 nonpersonnel <-
-  bind_rows(r051a_ga0, r051a_gd0) |>
+  bind_rows(nonpersonnel_ga0, nonpersonnel_gd0) |>
+  clean_names() |>
   rename(
     agency_id = agency,
     program_id = program, program_name = program_desc,
@@ -95,6 +109,7 @@ nonpersonnel <-
     award_id = award, award_name = award_desc
   ) |>
   filter(agency_id == "GA0" | ((project_id %in% r209$project_id))) |>
+  filter(net_accounted != 0.00) |>
   left_join(costcenters, by = join_by(costcenter_id)) |>
   mutate(
     costcenter_id = if_else(
@@ -125,16 +140,17 @@ nonpersonnel |>
   sum()
 ```
 
+# Transform
+
 ```{r}
 services_excluded <- c(
   "7131002",
   "7131003",
-  "7131006",
+  "7131004",
   "7131007",
   "7131012",
   "7131014",
   "7131015",
-  "7131016",
   "7131017",
   "7131019",
   "7131020",
@@ -149,30 +165,24 @@ services_excluded <- c(
 ```{r}
 nonpersonnel_clean <-
   nonpersonnel |>
-  mutate(po_number = str_extract(
-    transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
-  )) |>
-  mutate(is_po = !is.na(po_number)) |>
-  mutate(
-    is_service = when_all(
-      str_detect(account_parent_1, "^713[12]"),
-      !(account_id %in% services_excluded)
-    )
-  ) |>
   mutate(is_capital = case_when(
     appropriation_fund == "3030" ~ TRUE,
     .default = FALSE
-  ))
+  )) |>
+  mutate(is_service = when_all(
+    str_detect(account_id, "^713[12]"),
+    !(account_id %in% services_excluded)
+  )) |>
+  mutate(po_number = str_extract(
+    transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
+  )) |>
+  mutate(is_po = !is.na(po_number), .before = po_number)
 ```
-
-# Transform
 
 ```{r}
 # r051a_aug <-
 #   r051a_clean |>
-# left_join(costcenters, by = join_by(costcenter)) |>
 # left_join(programs, by = join_by(program)) |>
-# left_join(pos, by = join_by(po_number)) |>
 # left_join(pos_cat_prev, by = join_by(po_number)) |>
 # mutate(is_grant = case_when(
 #   award == "1000074" & project == "400308" ~ TRUE,
@@ -181,7 +191,6 @@ nonpersonnel_clean <-
 #   .default = FALSE
 # ))
 ```
-
 
 ```{r}
 nonpersonnel_clean |>
@@ -193,11 +202,53 @@ nonpersonnel_clean |>
 Write out PO's for review
 
 ```{r}
+nonpersonnel_po <-
+  nonpersonnel_clean |>
+  filter(is_po, is_service)
+
+po_costcenters <-
+  nonpersonnel_po |>
+  summarize(
+    costcenter_names = str_flatten(
+      sort(unique(costcenter_name)),
+      collapse = "; "
+    ),
+    .by = po_number
+  )
+
+po_accounts <-
+  nonpersonnel_po |>
+  mutate(account_combo = str_c(account_id, " || ", account_name)) |>
+  summarize(
+    net_accounted = sum(net_accounted), .by = c(po_number, account_combo)
+  ) |>
+  filter(net_accounted != 0.00) |>
+  pivot_wider(
+    id_cols = po_number,
+    names_from = account_combo, values_from = net_accounted, names_sort = TRUE
+  ) |>
+  rowwise() |>
+  mutate(po_total = sum(c_across(starts_with("713")), na.rm = TRUE)) |>
+  ungroup()
+
+po_detail <-
+  po_costcenters |>
+  left_join(po_accounts, by = join_by(po_number)) |>
+  left_join(po, by = join_by(po_number)) |>
+  relocate(
+    c(supplier_names, costcenter_names, item_descriptions),
+    .after = po_number
+  ) |>
+  arrange(supplier_names, costcenter_names, item_descriptions, po_number)
+
+po_detail |> write_csv(glue("{path_data}/working/po_detail.csv"), na = "")
 ```
 
 # Diagnostics
 
 ```{r}
+#| eval: false
+
 nonpersonnel_clean
 ```
 

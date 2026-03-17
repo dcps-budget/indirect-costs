@@ -104,15 +104,15 @@ ledger |> write_parquet(glue("{path_data}/working/ledger.parquet"))
 ```{r}
 ledger |>
   distinct(costcenter_name, costcenter_id) |>
-  arrange(costcenter_name) |> 
+  arrange(costcenter_name) |>
   write_csv(glue("{path_data}/working/costcenters.csv"))
 ```
 
 ```{r}
 ledger |>
-  filter(account_category == "710000A") |> 
+  filter(account_category == "710000A") |>
   distinct(account_name, account_id) |>
-  arrange(account_name) |> 
+  arrange(account_name) |>
   write_csv(glue("{path_data}/working/accounts.csv"))
 ```
 
@@ -168,7 +168,7 @@ ledger |>
 ```
 
 ```{r}
-ledger |> 
+ledger |>
   summarize(ending_balance = sum(ending_balance), .by = account_category_desc)
 ```
 
