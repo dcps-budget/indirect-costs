@@ -125,7 +125,7 @@ ledger |>
   filter(
     !is_nonbudgetary, !is_osse, !is_summeradvance, !is_capital, !is_medicaid
   ) |>
-  summarize(ending_balance = sum(ending_balance) %/% 1000)
+  summarize(ending_balance = sum(ending_balance))
 ```
 
 ```{r}

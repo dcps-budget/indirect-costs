@@ -24,9 +24,13 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 ## Cost center categorization
 
 ```{r}
-costcenters <-
+costcenters_school <-
   read_excel(glue("{path_data}/manual/costcenters_categorization.xlsx")) |>
   select(costcenter_id, is_school)
+
+costcenters_categorization <-
+  read_excel(glue("{path_data}/manual/costcenters_categorization.xlsx")) |>
+  select(costcenter_id, is_school, is_all_direct, is_all_indirect, is_mixed)
 ```
 
 ## Ledger
@@ -37,7 +41,7 @@ Filter out non-budgetary.
 ```{r}
 ledger_full <-
   read_parquet(glue("{path_data}/working/ledger.parquet")) |>
-  left_join(costcenters, by = join_by(costcenter_id)) |>
+  left_join(costcenters_school, by = join_by(costcenter_id)) |>
   mutate(
     costcenter_id = if_else(
       is_school, "SCHOOL", costcenter_id, missing = costcenter_id
@@ -60,7 +64,7 @@ ledger_personnel <-
 ```{r}
 personnel <-
   read_parquet(glue("{path_data}/raw/personnel_{year_fiscal}.parquet")) |>
-  left_join(costcenters, by = join_by(costcenter_id)) |>
+  left_join(costcenters_school, by = join_by(costcenter_id)) |>
   mutate(
     costcenter_id = if_else(
       is_school, "SCHOOL", costcenter_id, missing = costcenter_id
@@ -357,12 +361,22 @@ personnel_aligned |>
 
 # Transform
 
+```{r}
+position_has_school <-
+  personnel_aligned |>
+  filter(costcenter_id == "SCHOOL") |>
+  distinct(position_id) |>
+  mutate(position_has_school = TRUE)
+```
+
 Roll up to cost center and program.
 Add columns for salary, benefits, and terminal leave.
 
 ```{r}
 personnel_clean <-
   personnel_aligned |>
+  select(!is_school) |>
+  left_join(costcenters_categorization, by = join_by(costcenter_id)) |>
   mutate(amt_salary = case_when(
     str_starts(account_id, "7011") ~ amount,
     str_starts(account_id, "7012") ~ amount,
@@ -384,18 +398,31 @@ personnel_clean <-
     amt_benefits = sum(amt_benefits),
     amt_terminal = sum(amt_terminal),
     .by = c(
+      is_school, is_all_direct, is_all_indirect, is_mixed,
       costcenter_id, costcenter_name,
       program_id, program_name,
       position_id, position_title,
       employee_id, employee_name
     )
   ) |>
+  left_join(position_has_school, by = join_by(position_id)) |>
+  relocate(position_has_school, .before = position_id) |>
   arrange(
+    is_school, is_all_direct, is_all_indirect, is_mixed,
     costcenter_name,
     program_name,
+    position_has_school,
     position_title,
     employee_name
   )
+
+personnel_clean_review <-
+  personnel_clean |>
+  filter_out(when_any(is_all_direct, is_all_indirect))
+
+personnel_clean_noreview <-
+  personnel_clean |>
+  filter(when_any(is_all_direct, is_all_indirect))
 ```
 
 # Output
@@ -406,6 +433,12 @@ personnel_clean |>
 
 personnel_clean |>
   write_csv(glue("{path_data}/working/personnel_clean.csv"), na = "")
+
+personnel_clean_review |>
+  write_csv(glue("{path_data}/working/personnel_clean_review.csv"), na = "")
+
+personnel_clean_noreview |>
+  write_csv(glue("{path_data}/working/personnel_clean_noreview.csv"), na = "")
 ```
 
 # Diagnostics
