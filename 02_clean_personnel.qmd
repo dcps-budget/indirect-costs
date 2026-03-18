@@ -21,7 +21,7 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 # Import
 
-## Cost center categorization
+## Categorization
 
 ```{r}
 costcenters_school <-
@@ -31,6 +31,11 @@ costcenters_school <-
 costcenters_categorization <-
   read_excel(glue("{path_data}/manual/costcenters_categorization.xlsx")) |>
   select(costcenter_id, is_school, is_all_direct, is_all_indirect, is_mixed)
+
+positions_direct <-
+  read_excel(glue("{path_data}/manual/positions_direct.xlsx")) |>
+  pull(position_title) |>
+  str_flatten(collapse = "|")
 ```
 
 ## Ledger
@@ -254,6 +259,14 @@ ledger_costcenter_account <-
   ) |>
   filter(amount != 0.00 | costcenter_id == "PAYROLL DEFAULT")
 
+ledger_account <-
+  ledger_personnel |>
+  summarize(
+    amount = sum(ending_balance),
+    .by = c(account_id)
+  ) |>
+  filter(amount != 0.00)
+
 addtnl_rows_costcenter <-
   ledger_costcenter_account |>
   filter_out(costcenter_id %in% personnel$costcenter_id) |>
@@ -276,30 +289,34 @@ personnel <-
 personnel_costcenter_account <-
   personnel |>
   summarize(amount = sum(amount), .by = c(costcenter_id, account_id))
+
+personnel_account <-
+  personnel |>
+  summarize(amount = sum(amount), .by = c(account_id))
 ```
 
 ```{r}
 personnel_comparison <-
-  ledger_costcenter_account |>
+  ledger_account |>
   rename(amount_ledger = amount) |>
   full_join(
-    personnel_costcenter_account,
-    by = join_by(costcenter_id, account_id)
+    personnel_account,
+    by = join_by(account_id)
   ) |>
-  arrange(costcenter_id, account_id)
+  arrange(account_id)
 
 missing_personnel <-
   personnel_comparison |>
   filter(is.na(amount)) |>
-  select(costcenter_id, account_id, amount_ledger) |>
-  arrange(costcenter_id, account_id)
+  select(account_id, amount_ledger) |>
+  arrange(account_id)
 
 multipliers <-
   personnel_comparison |>
   filter(!is.na(amount)) |>
   mutate(multiplier = amount_ledger / amount) |>
-  select(costcenter_id, account_id, multiplier) |>
-  arrange(costcenter_id, account_id)
+  select(account_id, multiplier) |>
+  arrange(account_id)
 ```
 
 Impute missing combinations for cost center and account.
@@ -307,7 +324,8 @@ Impute missing combinations for cost center and account.
 ```{r}
 attributes_imputable <-
   missing_personnel |>
-  select(costcenter_id, account_id) |>
+  left_join(ledger_costcenter_account, by = join_by(account_id)) |>
+  distinct(costcenter_id, account_id) |>
   mutate(is_imputed = TRUE) |>
   pivot_wider(
     names_from = account_id, names_sort = TRUE, values_from = is_imputed
@@ -316,11 +334,10 @@ attributes_imputable <-
 
 rows_need_impute <-
   personnel |>
+  filter(costcenter_id %in% attributes_imputable$costcenter_id) |>
   select(!c(account_id, amount)) |>
-  filter(costcenter_id %in% missing_personnel$costcenter_id) |>
   distinct() |>
   left_join(attributes_imputable, by = join_by(costcenter_id)) |>
-  filter(if_any(starts_with("70"))) |>
   pivot_longer(
     cols = starts_with("70"),
     names_to = "account_id", values_to = "is_imputed", values_drop_na = TRUE
@@ -329,28 +346,28 @@ rows_need_impute <-
 
 amounts_impute <-
   rows_need_impute |>
-  count(costcenter_id, account_id) |>
-  left_join(missing_personnel, by = join_by(costcenter_id, account_id)) |>
+  count(account_id) |>
+  left_join(missing_personnel, by = join_by(account_id)) |>
   mutate(amount = amount_ledger / n) |>
-  select(costcenter_id, account_id, amount) |>
-  arrange(costcenter_id, account_id)
+  select(account_id, amount) |>
+  arrange(account_id)
 ```
 
 ```{r}
 personnel_aligned <-
   personnel |>
-  left_join(multipliers, by = join_by(costcenter_id, account_id)) |>
+  left_join(multipliers, by = join_by(account_id)) |>
   mutate(amount = amount * multiplier) |>
   select(!multiplier) |>
   bind_rows(
     left_join(
       rows_need_impute, amounts_impute,
-      by = join_by(costcenter_id, account_id)
+      by = join_by(account_id)
     )
   ) |>
   filter(amount != 0.00)
 
-ledger_costcenter_account |>
+ledger_account |>
   pull(amount) |>
   sum()
 
@@ -406,23 +423,20 @@ personnel_clean <-
     )
   ) |>
   left_join(position_has_school, by = join_by(position_id)) |>
-  relocate(position_has_school, .before = position_id) |>
+  mutate(
+    position_is_direct = str_detect(
+      position_title, regex(positions_direct, ignore_case = TRUE)
+    )
+  ) |>
+  relocate(c(position_is_direct, position_has_school), .before = position_id) |>
   arrange(
     is_school, is_all_direct, is_all_indirect, is_mixed,
     costcenter_name,
     program_name,
-    position_has_school,
+    position_is_direct, position_has_school,
     position_title,
     employee_name
   )
-
-personnel_clean_review <-
-  personnel_clean |>
-  filter_out(when_any(is_all_direct, is_all_indirect))
-
-personnel_clean_noreview <-
-  personnel_clean |>
-  filter(when_any(is_all_direct, is_all_indirect))
 ```
 
 # Output
@@ -434,18 +448,24 @@ personnel_clean |>
 personnel_clean |>
   write_csv(glue("{path_data}/working/personnel_clean.csv"), na = "")
 
-personnel_clean_review |>
-  write_csv(glue("{path_data}/working/personnel_clean_review.csv"), na = "")
+personnel_clean |>
+  filter(when_any(is_all_direct, is_all_indirect)) |>
+  write_csv(glue("{path_data}/working/personnel_rev_none.csv"), na = "")
 
-personnel_clean_noreview |>
-  write_csv(glue("{path_data}/working/personnel_clean_noreview.csv"), na = "")
+personnel_clean |>
+  filter_out(when_any(is_all_direct, is_all_indirect)) |>
+  filter(position_is_direct) |>
+  write_csv(glue("{path_data}/working/personnel_rev_direct.csv"), na = "")
+
+personnel_clean |>
+  filter_out(when_any(is_all_direct, is_all_indirect)) |>
+  filter(!position_is_direct) |>
+  write_csv(glue("{path_data}/working/personnel_rev_full.csv"), na = "")
 ```
 
 # Diagnostics
 
 ```{r}
-#| eval: true
-
 personnel_bad <-
   personnel_clean |>
   mutate(
@@ -492,7 +512,7 @@ personnel_bad |>
     position_id, position_title, employee_id, employee_name,
     program_id, program_name, costcenter_id, costcenter_name,
   ) |>
-  write_csv(glue("{path_data}/bad/missing_position.csv"), na = "")
+  write_csv(glue("{path_data}/bad/bad_position.csv"), na = "")
 
 personnel_bad |>
   filter(missing_employee) |>
@@ -500,7 +520,18 @@ personnel_bad |>
     position_id, position_title, employee_id, employee_name,
     program_id, program_name, costcenter_id, costcenter_name,
   ) |>
-  write_csv(glue("{path_data}/bad/missing_employee.csv"), na = "")
+  write_csv(glue("{path_data}/bad/bad_employee.csv"), na = "")
+
+personnel_clean |>
+  filter_out(when_any(is_all_direct, is_all_indirect)) |>
+  summarize(
+    .by = costcenter_name,
+    n_total = n(),
+    n_direct = sum(position_is_direct),
+    n_indirect = sum(!position_is_direct),
+    prop_direct = n_direct / n_total
+  ) |>
+  arrange(desc(prop_direct))
 ```
 
 ```{r}
