@@ -17,62 +17,33 @@ options(scipen = 12, digits = 12)
 
 path_data <- Sys.getenv("PATH_DATA")
 year_fiscal <- Sys.getenv("YEAR_FISCAL")
-
-path_r209 <- glue("{path_data}/raw/r209_GD0_GA0_{year_fiscal}.xlsx")
-path_r023_ga0 <- glue("{path_data}/raw/r023_expense_GA0_{year_fiscal}.xls")
-path_r023_gd0 <- glue("{path_data}/raw/r023_expense_GD0_{year_fiscal}.xls")
 ```
 
 # Import
 
 ```{r}
 r209 <-
-  read_excel(path_r209, col_types = "text", range = "A17:AG3974") |>
+  read_excel(
+    glue("{path_data}/raw/r209_GD0_GA0_{year_fiscal}.xlsx"),
+    range = "A17:AG3974", col_types = "text"
+  ) |>
   clean_names() |>
   rename(project_id = project)
 
 r023_ga0 <-
   read_excel(
-    path_r023_ga0,
-    col_types = c(rep("text", 35), rep("numeric", 3)),
-    range = "A15:AL64383"
+    glue("{path_data}/raw/r023_expense_GA0_{year_fiscal}.xls"),
+    range = "A15:AL64383", col_types = c(rep("text", 35), rep("numeric", 3))
   )
 
 r023_gd0 <-
   read_excel(
-    path_r023_gd0,
-    col_types = c(rep("text", 35), rep("numeric", 3)),
-    range = "A15:AL11651"
+    glue("{path_data}/raw/r023_expense_GD0_{year_fiscal}.xls"),
+    range = "A15:AL11651", col_types = c(rep("text", 35), rep("numeric", 3))
   )
 
-r023_raw <-
-  bind_rows(r023_ga0, r023_gd0) |>
-  filter(Agency == "GA0" | ((Project %in% r209$project_id))) |>
-  mutate(
-    `Cost Center` = if_else(
-      `Program` == "150011", "PAYROLL DEFAULT", `Cost Center`
-    ),
-    `Cost Center Desc` = if_else(
-      `Program` == "150011", "PAYROLL DEFAULT", `Cost Center Desc`
-    ),
-  )
-```
-
-"Compiled General Ledger" document for submission
-
-```{r}
-r023_raw |>
-  write_csv(
-    glue("{path_data}/schedules/3.1 Compiled General Ledger.csv"),
-    na = ""
-  )
-```
-
-# Tidy
-
-```{r}
 ledger <-
-  r023_raw |>
+  bind_rows(r023_ga0, r023_gd0) |>
   clean_names() |>
   rename(
     agency_id = agency,
@@ -82,8 +53,29 @@ ledger <-
     account_id = account, account_name = account_desc,
     project_id = project, project_name = project_desc,
     award_id = award, award_name = award_desc
+  ) |>
+  filter(agency_id == "GA0" | ((project_id %in% r209$project_id))) |>
+  mutate(
+    costcenter_id = if_else(
+      program_id == "150011", "PAYROLL DEFAULT", costcenter_id
+    ),
+    costcenter_name = if_else(
+      program_id == "150011", "PAYROLL DEFAULT", costcenter_name
+    ),
   )
 ```
+
+"Compiled General Ledger" document for submission
+
+```{r}
+ledger |>
+  write_csv(
+    glue("{path_data}/schedules/3.1 Compiled General Ledger.csv"),
+    na = ""
+  )
+```
+
+# Tidy
 
 ```{r}
 ledger <-
