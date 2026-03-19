@@ -86,7 +86,7 @@ personnel <-
       program_id == "150011", "PAYROLL DEFAULT", costcenter_name
     ),
   ) |>
-  select(!c(row_485))
+  select(!c(row_485, is_school))
 
 personnel |> nrow()
 ```
@@ -392,8 +392,6 @@ Add columns for salary, benefits, and terminal leave.
 ```{r}
 personnel_clean <-
   personnel_aligned |>
-  select(!is_school) |>
-  left_join(costcenters_categorization, by = join_by(costcenter_id)) |>
   mutate(amt_salary = case_when(
     str_starts(account_id, "7011") ~ amount,
     str_starts(account_id, "7012") ~ amount,
@@ -415,18 +413,31 @@ personnel_clean <-
     amt_benefits = sum(amt_benefits),
     amt_terminal = sum(amt_terminal),
     .by = c(
-      is_school, is_all_direct, is_all_indirect, is_mixed,
       costcenter_id, costcenter_name,
       program_id, program_name,
       position_id, position_title,
       employee_id, employee_name
     )
   ) |>
-  left_join(position_has_school, by = join_by(position_id)) |>
   mutate(
     position_is_direct = str_detect(
       position_title, regex(positions_direct, ignore_case = TRUE)
     )
+  ) |>
+  left_join(position_has_school, by = join_by(position_id)) |>
+  mutate(
+    costcenter_id = if_else(
+      position_is_direct & position_has_school, "SCHOOL",
+      costcenter_id, missing = costcenter_id
+    ),
+    costcenter_name = if_else(
+      position_is_direct & position_has_school, "SCHOOL",
+      costcenter_name, missing = costcenter_name
+    ),
+  ) |>
+  left_join(costcenters_categorization, by = join_by(costcenter_id)) |>
+  relocate(
+    c(is_school, is_all_direct, is_all_indirect, is_mixed)
   ) |>
   relocate(c(position_is_direct, position_has_school), .before = position_id) |>
   arrange(
@@ -521,14 +532,25 @@ personnel_bad |>
     program_id, program_name, costcenter_id, costcenter_name,
   ) |>
   write_csv(glue("{path_data}/bad/bad_employee.csv"), na = "")
+```
+
+```{r}
+personnel_clean |>
+  filter_out(when_any(is_all_direct, is_all_indirect, position_is_direct))
 
 personnel_clean |>
   filter_out(when_any(is_all_direct, is_all_indirect)) |>
   summarize(
     .by = costcenter_name,
     n_total = n(),
+    n_likely_direct = sum(
+      position_has_school | position_is_direct,
+      na.rm = TRUE
+    ),
+    n_school = sum(position_has_school, na.rm = TRUE),
     n_direct = sum(position_is_direct),
     n_indirect = sum(!position_is_direct),
+    prop_likely_direct = n_likely_direct / n_total,
     prop_direct = n_direct / n_total
   ) |>
   arrange(desc(prop_direct))
