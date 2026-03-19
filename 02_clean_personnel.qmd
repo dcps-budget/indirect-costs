@@ -404,21 +404,11 @@ personnel_clean <-
     str_starts(account_id, "7014") ~ amount,
     .default = 0.00
   )) |>
+  mutate(amt_total = amt_salary + amt_benefits) |>
   mutate(amt_terminal = case_when(
     account_id == "7013007" ~ amount,
     .default = 0.00
   )) |>
-  summarize(
-    amt_salary = sum(amt_salary),
-    amt_benefits = sum(amt_benefits),
-    amt_terminal = sum(amt_terminal),
-    .by = c(
-      costcenter_id, costcenter_name,
-      program_id, program_name,
-      position_id, position_title,
-      employee_id, employee_name
-    )
-  ) |>
   mutate(
     position_is_direct = str_detect(
       position_title, regex(positions_direct, ignore_case = TRUE)
@@ -435,11 +425,21 @@ personnel_clean <-
       costcenter_name, missing = costcenter_name
     ),
   ) |>
-  left_join(costcenters_categorization, by = join_by(costcenter_id)) |>
-  relocate(
-    c(is_school, is_all_direct, is_all_indirect, is_mixed)
+  summarize(
+    amt_salary = sum(amt_salary),
+    amt_benefits = sum(amt_benefits),
+    amt_total = sum(amt_total),
+    amt_terminal = sum(amt_terminal),
+    .by = c(
+      costcenter_id, costcenter_name,
+      program_id, program_name,
+      position_is_direct, position_has_school,
+      position_id, position_title,
+      employee_id, employee_name
+    )
   ) |>
-  relocate(c(position_is_direct, position_has_school), .before = position_id) |>
+  left_join(costcenters_categorization, by = join_by(costcenter_id)) |>
+  relocate(c(is_school, is_all_direct, is_all_indirect, is_mixed)) |>
   arrange(
     is_school, is_all_direct, is_all_indirect, is_mixed,
     costcenter_name,
@@ -498,7 +498,7 @@ personnel_bad <-
     employee_name, employee_id
   ) |>
   summarize(
-    amount = sum(amt_salary + amt_benefits), .groups = "drop"
+    amt_total = sum(amt_total), .groups = "drop"
   )
 
 personnel_bad |>
@@ -535,9 +535,6 @@ personnel_bad |>
 ```
 
 ```{r}
-personnel_clean |>
-  filter_out(when_any(is_all_direct, is_all_indirect, position_is_direct))
-
 personnel_clean |>
   filter_out(when_any(is_all_direct, is_all_indirect)) |>
   summarize(

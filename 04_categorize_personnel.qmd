@@ -1,5 +1,5 @@
 ---
-title: "Clean Personnel"
+title: "Categorize Personnel"
 format: html
 ---
 
@@ -20,8 +20,6 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 ```
 
 # Import
-
-Lookup tables
 
 ```{r}
 #| eval: false
@@ -55,113 +53,93 @@ categorization_override <-
   clean_names() %>%
   filter(!is.na(categorization_override)) %>%
   distinct(costcenter, position, categorization_override)
-
-headcomponent <-
-  read_excel(
-    glue(
-      "{path_working}/Head of Component.xlsx"
-    ),
-    col_types = "text"
-  ) %>%
-  clean_names() %>%
-  distinct(costcenter, position, is_executive, is_headcomponent)
 ```
 
 Personnel
 
 ```{r}
-data_485_raw <-
-  read_parquet(glue("{path_data}/personnel_{year_fiscal}.parquet")) %>%
-  replace_na(list(project_id = "000000", award_id = "0000000")) %>%
-  select(!c(row_485, account_raw, account_pref_2, account_pref_4))
-
-data_485_raw %>% nrow()
+personnel <- read_parquet(glue("{path_data}/working/personnel_clean.parquet"))
 ```
 
-***
+```{r}
+personnel_categorization <-
+  read_excel(
+    glue("{path_data}/manual/personnel_categorization.xlsx"),
+    col_types = c(
+      rep("text", 1),
+      rep("logical", 4),
+      rep("text", 4),
+      rep("logical", 2),
+      rep("text", 4),
+      rep("numeric", 3)
+    )
+  )
+
+personnel_categorization <-
+  personnel_categorization |>
+  mutate(
+    categorization = sample(c("Direct", "Indirect"), size = n(), replace = TRUE)
+  )
+
+headcomponent <-
+  read_excel(
+    glue("{path_data}/manual/headcomponent.xlsx"),
+    col_types = c(rep("logical", 2), rep("text", 11))
+  ) |>
+  select(
+    costcenter_id, program_id, position_id, employee_id,
+    is_executive, is_headcomponent
+  )
+```
+
+# Categorize
+
+```{r}
+personnel_categorized <-
+  personnel |>
+  anti_join(
+    personnel_categorization,
+    by = join_by(costcenter_id, program_id, position_id, employee_id)
+  ) |>
+  mutate(categorization = case_when(
+    is_all_direct ~ "Direct",
+    is_all_indirect ~ "Indirect",
+    is_mixed & position_is_direct ~ "Direct",
+  )) |>
+  bind_rows(personnel_categorization) |>
+  left_join(
+    headcomponent,
+    by = join_by(costcenter_id, program_id, position_id, employee_id)
+  ) |>
+  mutate(headcomponent = case_when(
+    is_executive ~ "Executive",
+    is_headcomponent ~ "Head of component",
+    .default = "Non-executive"
+  )) |>
+  arrange(
+    costcenter_name, program_name, headcomponent, position_id, employee_id
+  )
+
+personnel_categorized
+```
 
 # Transform
 
 ```{r}
-data_485_clean <-
-  data_485_corrected %>%
+personnel_categorized <-
+  personnel_categorized %>%
   mutate(
-    amt_pay_base = rowSums(across(starts_with("amt_7011") | starts_with("amt_7012"))),
-    amt_pay_additonal = rowSums(across(starts_with("amt_7013"))),
-    amt_overtime = rowSums(across(starts_with("amt_7015"))),
-    amt_exception = rowSums(across(starts_with("amt_7016"))),
-  ) %>%
-  mutate(
-    amt_salary = amt_pay_base + amt_pay_additonal + amt_overtime + amt_exception,
-    amt_benefits = rowSums(across(starts_with("amt_7014"))),
-    amt_terminal = amt_7013007
-  )
-```
-
-Augment
-
-```{r}
-data_485_aug <-
-  data_485_clean %>%
-  left_join(costcenters, by = join_by(costcenter)) %>%
-  left_join(programs, by = join_by(program)) %>%
-  left_join(headcomponent, by = join_by(costcenter, position)) %>%
-  left_join(categorization_override, by = join_by(costcenter, position)) %>%
-  left_join(categorization_prev, by = join_by(costcenter, position)) %>%
-  left_join(categorization_sp, by = join_by(costcenter, program_2, program)) %>%
-  mutate(headcomponent = case_when(
-    is_executive == 1 ~ "Executive",
-    is_headcomponent == 1 ~ "Head of component",
-    .default = "Non-executive"
-  )) %>%
-  mutate(
-    categorization = case_when(
-      costcenter_name_clean == "SCHOOLS" ~ "Direct",
-      !is.na(categorization_override) ~ categorization_override,
-      !is.na(categorization_prev) ~ categorization_prev,
-      .default = categorization_sp
-    )
-  ) %>%
-  mutate(
-    costcenter_clean = if_else(program_name == "PAYROLL DEFAULT", "00000", costcenter_clean),
-    costcenter_name_clean = if_else(program_name == "PAYROLL DEFAULT", "NO COST CENTER", costcenter_name_clean)
-  )
-```
-
-# Output
-
-```{r}
-personnel <-
-  data_485_aug %>%
-  group_by(
-    costcenter_clean, costcenter, program_2, program, position, emplid, headcomponent,
-    costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean,
-    categorization
-  ) %>%
-  summarize(
-    amt_salary = sum(amt_salary),
-    amt_benefits = sum(amt_benefits),
-    amt_terminal = sum(amt_terminal)
-  ) %>%
-  ungroup() %>%
-  relocate(
-    c(categorization, costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean, headcomponent)
-  ) %>%
-  mutate(
-    amt_direct = if_else(categorization == "Direct", amt_salary + amt_benefits, 0),
-    amt_indirect = if_else(categorization == "Indirect", amt_salary + amt_benefits, 0),
-    amt_total = amt_direct + amt_indirect,
-    amt_unrestricted = if_else(headcomponent == "Non-executive", amt_salary + amt_benefits, 0.00),
+    amt_direct = if_else(categorization == "Direct", amt_total, 0.00),
+    amt_indirect = if_else(categorization == "Indirect", amt_total, 0.00),
+    amt_unrestricted = if_else(headcomponent == "Non-executive", amt_total, 0.00),
     amt_headcomponent_direct = if_else(headcomponent != "Non-executive" & categorization == "Direct", amt_total, 0),
     amt_headcomponent_indirect = if_else(headcomponent != "Non-executive" & categorization == "Indirect", amt_total, 0),
     amt_headcomponent_total = if_else(headcomponent != "Non-executive", amt_total, 0),
     amt_terminal_to_indirect = if_else(categorization == "Direct" & headcomponent == "Non-executive", amt_terminal, 0),
     amt_terminal_restricted = if_else(headcomponent != "Non-executive", amt_terminal, 0)
-  ) %>%
-  arrange(costcenter_name_clean, costcenter_name, program_2_name, program_name, title, name_clean) %>%
-  relocate(c(costcenter_clean, costcenter, program_2, program, position, emplid), .after = last_col())
+  )
 
-personnel %>% write_csv("data/csv/personnel.csv", na = "")
+personnel_categorized
 ```
 
 Every cost center, position group is associated with only 1 categorization.
