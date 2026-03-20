@@ -439,7 +439,8 @@ personnel_clean <-
     )
   ) |>
   left_join(costcenters_categorization, by = join_by(costcenter_id)) |>
-  relocate(c(is_school, is_all_direct, is_all_indirect, is_mixed)) |>
+  relocate(c(position_has_school), .after = position_title) |>
+  relocate(c(position_is_direct), .after = last_col()) |>
   arrange(
     is_school, is_all_direct, is_all_indirect, is_mixed,
     costcenter_name,
