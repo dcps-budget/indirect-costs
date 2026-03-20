@@ -21,7 +21,7 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 # Import
 
-## Cost center categorization
+Cost center categorization.
 
 ```{r}
 costcenters <-
@@ -44,9 +44,9 @@ costcenters <-
 #     glue("{path_working}/Grants good.xlsx"),
 #     col_types = c(rep("text", 3), "logical")
 #   )
-
-# programs <- read_excel("data/programs.xlsx")
 ```
+
+Raw non-personnel data.
 
 ```{r}
 nonpersonnel_ga0 <-
@@ -73,28 +73,30 @@ r209 <-
   rename(project_id = project)
 ```
 
+Purchase order details.
+
 ```{r}
 po <-
   read_excel(
-    glue("{path_data}/raw/r304_2022_2026.xls"),
-    range = "A9:AP40408",
+    glue("{path_data}/raw/r071_2022_2026.xls"),
+    range = "A23:AY40447",
     col_types = "text"
   ) |>
   clean_names() |>
   summarize(
-    supplier_names = str_flatten(
+    suppliers = str_flatten(
       sort(unique(supplier_name)),
       collapse = "; "
     ),
-    item_descriptions = str_flatten(
-      sort(unique(item_description)),
+    items = str_flatten(
+      sort(unique(po_line_item_description)),
       collapse = "; "
     ),
-    .by = po_number
+    .by = c(po_number, po_title)
   )
 ```
 
-# Tidy
+# Tidy and Transform
 
 ```{r}
 nonpersonnel <-
@@ -140,7 +142,7 @@ nonpersonnel |>
   sum()
 ```
 
-# Transform
+Account ID's starting with 7131 or 7132, but that are not services.
 
 ```{r}
 services_excluded <- c(
@@ -182,7 +184,6 @@ nonpersonnel_clean <-
 ```{r}
 # r051a_aug <-
 #   r051a_clean |>
-# left_join(programs, by = join_by(program)) |>
 # left_join(pos_cat_prev, by = join_by(po_number)) |>
 # mutate(is_grant = case_when(
 #   award == "1000074" & project == "400308" ~ TRUE,
@@ -199,7 +200,7 @@ nonpersonnel_clean |>
   write_csv(glue("{path_data}/working/nonpersonnel_clean.csv"), na = "")
 ```
 
-Write out PO's for review
+Write out purchase orders for manual review.
 
 ```{r}
 nonpersonnel_po <-
@@ -236,21 +237,15 @@ po_detail <-
   left_join(po_accounts, by = join_by(po_number)) |>
   left_join(po, by = join_by(po_number)) |>
   relocate(
-    c(supplier_names, costcenter_names, item_descriptions),
+    c(suppliers, costcenter_names, po_title, items, po_total),
     .after = po_number
   ) |>
-  arrange(supplier_names, costcenter_names, item_descriptions, po_number)
+  arrange(suppliers, costcenter_names, po_title, items, po_number)
 
 po_detail |> write_csv(glue("{path_data}/working/po_detail.csv"), na = "")
 ```
 
-# Diagnostics
-
-```{r}
-#| eval: false
-
-nonpersonnel_clean
-```
+# Diagnostic
 
 ```{r}
 Sys.time()
