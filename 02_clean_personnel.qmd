@@ -50,11 +50,21 @@ ledger_full <-
   read_parquet(glue("{path_data}/working/ledger.parquet")) |>
   left_join(costcenters_school, by = join_by(costcenter_id)) |>
   mutate(
-    costcenter_id = if_else(
-      is_school, "SCHOOL", costcenter_id, missing = costcenter_id
+    costcenter_id = case_when(
+      is_school ~ "SCHOOL",
+      costcenter_id %in% c("10001", "10002", "10003") ~ "OCFO",
+      costcenter_id %in% c(
+        "40080", "40084", "40228", "40229", "40242"
+      ) ~ "OTHER DIRECT",
+      costcenter_id %in% c("00000", "40223") ~ "OTHER INDIRECT",
+      .default = costcenter_id
     ),
-    costcenter_name = if_else(
-      is_school, "SCHOOL", costcenter_name, missing = costcenter_name
+    costcenter_name = case_when(
+      costcenter_id == "SCHOOL" ~ "SCHOOL",
+      costcenter_id == "OCFO" ~ "OFFICE OF THE CHIEF FINANCIAL OFFICER",
+      costcenter_id == "OTHER DIRECT" ~ "OTHER DIRECT",
+      costcenter_id == "OTHER INDIRECT" ~ "OTHER INDIRECT",
+      .default = costcenter_name
     ),
   )
 
@@ -77,6 +87,11 @@ costcenters_nonzero <-
 costcenters_negative <-
   costcenters_nonzero |>
   filter(ending_balance < 0.00)
+
+accounts_4_nonzero <-
+  ledger_personnel |>
+  summarize(ending_balance = sum(ending_balance), .by = account_4) |>
+  filter(ending_balance != 0.00)
 ```
 
 ## Personnel
@@ -86,11 +101,21 @@ personnel <-
   read_parquet(glue("{path_data}/raw/personnel_{year_fiscal}.parquet")) |>
   left_join(costcenters_school, by = join_by(costcenter_id)) |>
   mutate(
-    costcenter_id = if_else(
-      is_school, "SCHOOL", costcenter_id, missing = costcenter_id
+    costcenter_id = case_when(
+      is_school ~ "SCHOOL",
+      costcenter_id %in% c("10001", "10002", "10003") ~ "OCFO",
+      costcenter_id %in% c(
+        "40080", "40084", "40228", "40229", "40242"
+      ) ~ "OTHER DIRECT",
+      costcenter_id %in% c("00000", "40223") ~ "OTHER INDIRECT",
+      .default = costcenter_id
     ),
-    costcenter_name = if_else(
-      is_school, "SCHOOL", costcenter_name, missing = costcenter_name
+    costcenter_name = case_when(
+      costcenter_id == "SCHOOL" ~ "SCHOOL",
+      costcenter_id == "OCFO" ~ "OFFICE OF THE CHIEF FINANCIAL OFFICER",
+      costcenter_id == "OTHER DIRECT" ~ "OTHER DIRECT",
+      costcenter_id == "OTHER INDIRECT" ~ "OTHER INDIRECT",
+      .default = costcenter_name
     ),
   ) |>
   mutate(
@@ -109,12 +134,16 @@ personnel |> nrow()
 ## Manual fixes
 
 ```{r}
-fix_positions <-
+positions_fix <-
   read_excel(
-    glue("{path_data}/manual/fix_positions.xlsx"),
+    glue("{path_data}/manual/positions_fix.xlsx"),
     col_types = "text"
   ) |>
   distinct(position_id, position_title)
+
+positions_fix |>
+  count(position_id, sort = TRUE) |>
+  filter(n > 1)
 ```
 
 # Tidy
@@ -156,7 +185,7 @@ position_titles <-
   select(position_id, position_title)
 
 position_titles <-
-  fix_positions |>
+  positions_fix |>
   filter(!(position_id %in% position_titles$position_id)) |>
   bind_rows(position_titles)
 
@@ -275,6 +304,33 @@ personnel <-
 ```
 
 ```{r}
+position_has_school <-
+  personnel |>
+  filter(costcenter_id == "SCHOOL") |>
+  distinct(position_id) |>
+  mutate(position_has_school = TRUE)
+```
+
+```{r}
+personnel <-
+  personnel |>
+  mutate(
+    position_is_direct = str_detect(
+      position_title, regex(positions_direct, ignore_case = TRUE)
+    )
+  ) |>
+  left_join(position_has_school, by = join_by(position_id)) |>
+  mutate(
+    costcenter_id = if_else(
+      position_is_direct & position_has_school, "SCHOOL",
+      costcenter_id, missing = costcenter_id
+    ),
+    costcenter_name = if_else(
+      position_is_direct & position_has_school, "SCHOOL",
+      costcenter_name, missing = costcenter_name
+    ),
+  )
+
 personnel |> nrow()
 ```
 
@@ -283,18 +339,6 @@ personnel |> nrow()
 Align personnel amounts to ledger amounts.
 
 Calculate multiplier so that personnel expenses equal ledger expenses.
-
-```{r}
-accounts_nonzero <-
-  ledger_personnel |>
-  summarize(ending_balance = sum(ending_balance), .by = account_id) |>
-  filter(ending_balance != 0.00)
-
-accounts_4_nonzero <-
-  ledger_personnel |>
-  summarize(ending_balance = sum(ending_balance), .by = account_4) |>
-  filter(ending_balance != 0.00)
-```
 
 ```{r}
 ledger_costcenter_account <-
@@ -321,11 +365,11 @@ addtnl_rows_costcenter <-
 personnel <-
   personnel |>
   bind_rows(addtnl_rows_costcenter) |>
+  mutate(account_4 = str_extract(account_id, "^701[1-9]")) |>
   filter(
     costcenter_id %in% costcenters_nonzero$costcenter_id,
-    account_id %in% accounts_nonzero$account_id
-  ) |>
-  mutate(account_4 = str_extract(account_id, "^701[1-9]"))
+    account_4 %in% accounts_4_nonzero$account_4
+  )
 
 personnel_account_4 <-
   personnel |>
@@ -333,27 +377,17 @@ personnel_account_4 <-
 ```
 
 ```{r}
-personnel_comparison_4 <-
+multipliers_4 <-
   accounts_4_nonzero |>
   rename(amount_ledger = ending_balance) |>
   full_join(
     personnel_account_4,
     by = join_by(account_4)
-  )
-
-missing_personnel_4 <-
-  personnel_comparison_4 |>
-  filter(is.na(amount)) |>
-  select(account_4, amount_ledger)
-
-multipliers_4 <-
-  personnel_comparison_4 |>
+  ) |>
   filter(!is.na(amount)) |>
   mutate(multiplier = amount_ledger / amount) |>
   select(account_4, multiplier)
-```
 
-```{r}
 personnel_aligned <-
   personnel |>
   left_join(multipliers_4, by = join_by(account_4)) |>
@@ -371,14 +405,6 @@ personnel_aligned |>
 ```
 
 # Transform
-
-```{r}
-position_has_school <-
-  personnel_aligned |>
-  filter(costcenter_id == "SCHOOL") |>
-  distinct(position_id) |>
-  mutate(position_has_school = TRUE)
-```
 
 Roll up to cost center and program.
 Add columns for salary, benefits, and terminal leave.
@@ -402,22 +428,6 @@ personnel_clean <-
     account_id == "7013007" ~ amount,
     .default = 0.00
   )) |>
-  mutate(
-    position_is_direct = str_detect(
-      position_title, regex(positions_direct, ignore_case = TRUE)
-    )
-  ) |>
-  left_join(position_has_school, by = join_by(position_id)) |>
-  mutate(
-    costcenter_id = if_else(
-      position_is_direct & position_has_school, "SCHOOL",
-      costcenter_id, missing = costcenter_id
-    ),
-    costcenter_name = if_else(
-      position_is_direct & position_has_school, "SCHOOL",
-      costcenter_name, missing = costcenter_name
-    ),
-  ) |>
   summarize(
     amt_salary = sum(amt_salary),
     amt_benefits = sum(amt_benefits),
@@ -527,6 +537,50 @@ personnel_bad |>
   write_csv(glue("{path_data}/bad/bad_employee.csv"), na = "")
 ```
 
+All direct
+
+```{r}
+personnel_clean |>
+  filter(when_any(is_all_direct)) |>
+  summarize(
+    .by = c(costcenter_name, costcenter_id),
+    n_total = n(),
+    n_likely_direct = sum(
+      position_has_school | position_is_direct,
+      na.rm = TRUE
+    ),
+    n_school = sum(position_has_school, na.rm = TRUE),
+    n_direct = sum(position_is_direct),
+    n_indirect = sum(!position_is_direct),
+    prop_likely_direct = n_likely_direct / n_total,
+    prop_direct = n_direct / n_total
+  ) |>
+  arrange(costcenter_name)
+```
+
+All indirect
+
+```{r}
+personnel_clean |>
+  filter(when_any(is_all_indirect)) |>
+  summarize(
+    .by = c(costcenter_name, costcenter_id),
+    n_total = n(),
+    n_likely_direct = sum(
+      position_has_school | position_is_direct,
+      na.rm = TRUE
+    ),
+    n_school = sum(position_has_school, na.rm = TRUE),
+    n_direct = sum(position_is_direct),
+    n_indirect = sum(!position_is_direct),
+    prop_likely_direct = n_likely_direct / n_total,
+    prop_direct = n_direct / n_total
+  ) |>
+  arrange(costcenter_name)
+```
+
+Mixed
+
 ```{r}
 personnel_clean |>
   filter_out(when_any(is_all_direct, is_all_indirect)) |>
@@ -543,7 +597,7 @@ personnel_clean |>
     prop_likely_direct = n_likely_direct / n_total,
     prop_direct = n_direct / n_total
   ) |>
-  arrange(desc(prop_direct))
+  arrange(costcenter_name)
 ```
 
 ```{r}

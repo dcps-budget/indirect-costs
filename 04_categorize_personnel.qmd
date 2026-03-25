@@ -21,40 +21,6 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 # Import
 
-```{r}
-#| eval: false
-
-categorization_prev <-
-  read_excel("data/personnel_2023.xlsx", col_types = "text") |>
-  clean_names() |>
-  mutate(
-    across(position, \(x) str_pad(x, width = 8, side = "left", pad = "0"))
-  ) |>
-  distinct(costcenter, position, categorization_prev = position_type) |>
-  arrange(costcenter, position, categorization_prev)
-
-categorization_sp <-
-  read_excel(
-    glue(
-      "{path_working}/Categorization by Cost Center, Program 2, Program.xlsx"
-    ),
-    col_types = "text"
-  ) |>
-  clean_names() |>
-  select(costcenter, program_2, program, categorization_sp)
-
-categorization_override <-
-  read_excel(
-    glue(
-      "{path_working}/Override Personnel.xlsx"
-    ),
-    col_types = "text"
-  ) |>
-  clean_names() |>
-  filter(!is.na(categorization_override)) |>
-  distinct(costcenter, position, categorization_override)
-```
-
 Personnel
 
 ```{r}
@@ -64,33 +30,34 @@ personnel <- read_parquet(glue("{path_data}/working/personnel_clean.parquet"))
 Categorization
 
 ```{r}
+dummy <-
+  personnel |>
+  filter(is_mixed, !position_is_direct) |>
+  distinct(position_id) |>
+  rowwise() |>
+  mutate(categorization = sample(c("direct", "indirect"), size = 1)) |>
+  ungroup()
+
 personnel_categorization <-
   read_excel(
     glue("{path_data}/manual/personnel_categorization.xlsx"),
     col_types = c(
       rep("text", 1),
-      rep("logical", 4),
-      rep("text", 4),
-      rep("logical", 2),
-      rep("text", 4),
-      rep("numeric", 3)
+      rep("logical", 1),
+      rep("text", 8),
+      rep("numeric", 4),
+      rep("logical", 5)
     )
-  )
+  ) |>
+  rows_patch(dummy, by = "position_id")
 
-personnel_categorization <-
-  personnel_categorization |>
-  mutate(
-    categorization = sample(c("Direct", "Indirect"), size = n(), replace = TRUE)
-  )
-
-headcomp <-
+headcomponent <-
   read_excel(
     glue("{path_data}/manual/headcomponent.xlsx"),
     col_types = c(rep("logical", 2), rep("text", 11))
   ) |>
   select(
-    costcenter_id, program_id, position_id, employee_id,
-    is_executive, is_headcomponent
+    costcenter_id, program_id, position_id, employee_id, is_executive, is_head
   )
 ```
 
@@ -104,19 +71,19 @@ personnel_categorized <-
     by = join_by(costcenter_id, program_id, position_id, employee_id)
   ) |>
   mutate(categorization = case_when(
-    is_all_direct ~ "Direct",
-    is_all_indirect ~ "Indirect",
-    is_mixed & position_is_direct ~ "Direct",
+    is_all_direct ~ "direct",
+    is_all_indirect ~ "indirect",
+    is_mixed & position_is_direct ~ "direct",
   )) |>
   bind_rows(personnel_categorization) |>
   left_join(
-    headcomp,
+    headcomponent,
     by = join_by(costcenter_id, program_id, position_id, employee_id)
   ) |>
   mutate(headcomp = case_when(
-    is_executive ~ "Executive",
-    is_headcomponent ~ "Head",
-    .default = "Normal"
+    is_executive ~ "executive",
+    is_head ~ "head",
+    .default = "normal"
   )) |>
   arrange(
     costcenter_name, program_name, headcomp, position_id, employee_id
@@ -127,35 +94,37 @@ personnel_categorized <-
 personnel_categorized <-
   personnel_categorized |>
   mutate(
-    amt_direct = if_else(categorization == "Direct", amt_total, 0.00),
-    amt_indirect = if_else(categorization == "Indirect", amt_total, 0.00),
-    amt_unrestricted = if_else(headcomp == "Normal", amt_total, 0.00),
+    amt_direct = if_else(categorization == "direct", amt_total, 0.00),
+    amt_indirect = if_else(categorization == "indirect", amt_total, 0.00),
+    amt_unrestricted = if_else(headcomp == "normal", amt_total, 0.00),
     amt_headcomp_direct = if_else(
       when_all(
-        headcomp %in% c("Executive", "Head"),
-        categorization == "Direct"
+        headcomp %in% c("executive", "head"),
+        categorization == "direct"
       ),
       amt_total, 0.00
     ),
     amt_headcomp_indirect = if_else(
       when_all(
-        headcomp %in% c("Executive", "Head"),
-        categorization == "Indirect"
+        headcomp %in% c("executive", "head"),
+        categorization == "indirect"
       ),
       amt_total, 0.00
     ),
     amt_headcomp_total = amt_headcomp_direct + amt_headcomp_indirect,
     amt_terminal_to_indirect = if_else(
-      when_all(categorization == "Direct", headcomp == "Normal"),
+      when_all(categorization == "direct", headcomp == "normal"),
       amt_terminal, 0.00
     ),
     amt_terminal_restricted = if_else(
-      headcomp != "Non-executive",
+      headcomp != "non-executive",
       amt_terminal, 0.00
     )
   )
 
-personnel_categorized
+personnel_categorized |>
+  filter(is_mixed) |>
+  filter(!position_is_direct)
 ```
 
 # Diagnostic
@@ -167,9 +136,6 @@ personnel_categorized |>
   distinct(costcenter_name, position_id, categorization) |>
   count(costcenter_name, position_id, sort = TRUE) |>
   filter(n > 1)
-```
-
-```{r}
 ```
 
 Cost centers with only 1 categorization.
