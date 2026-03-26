@@ -23,131 +23,109 @@ year_fiscal <- Sys.getenv("YEAR_FISCAL")
 
 ```{r}
 nonpersonnel <-
-  read_csv(
-    "data/csv/nonpersonnel.csv",
-    col_types = cols(net_accounted = col_double(), .default = col_character())
-  )
+  read_parquet(glue("{path_data}/working/nonpersonnel_clean.parquet"))
 
 personnel <-
-  read_csv(
-    "data/csv/personnel.csv",
-    col_types = "c",
-    col_select = c(costcenter_clean, costcenter_name_clean, name_clean, title, headcomponent, categorization, amt_total)
-  ) %>% 
-  mutate(across(amt_total, as.numeric))
+  read_parquet(
+    glue("{path_data}/working/personnel_categorized.parquet")
+  )
 
 accounts <-
   read_excel(
-    glue("{path_working}/Categorization - Account.xlsx")
-  ) %>%
-  select(!c(account_desc, is_always_direct, is_always_indirect))
+    glue("{path_data}/manual/accounts_categorization.xlsx")
+  )
 
-cat_po <-
+po <-
   read_excel(
-    glue("{path_working}/Categorization - PO.xlsx")
-  ) %>%
-  distinct(po_number, account, cat_po)
+    glue("{path_data}/manual/po_categorization.xlsx")
+  )
 ```
 
-costcenter_name_clean, categorization,
-    name_clean, title, headcomponent,
+```{r}
+personnel <-
+  personnel |>
+  distinct(
+    categorization,
+    costcenter_id, costcenter_name,
+    position_id, position_title,
+    employee_id, employee_name,
+  )
+```
 
 # Personnel proportions by cost center
 
 ```{r}
-costcenters_missing <-
-  tribble(
-    ~costcenter_clean, ~categorization, ~amt_total,
-    "OCFO", "Indirect", 1.00, # OCFO
-    "10040", "Indirect", 1.00, # budget division, education cluster
-    "40208", "Direct", 1.00, # enrollment and residency
-    "40219", "Direct", 1.00, # child care subsidy program
-    "40229", "Direct", 1.00, # nutrition programs
-    "40233", "Direct", 1.00, # special education
-  )
+nonpersonnel |>
+  summarize(
+    net_accounted = sum(net_accounted), .by = c(costcenter_name, costcenter_id)
+  ) |>
+  arrange(costcenter_name)
 ```
 
 ```{r}
-props_costcenter <-
+prop_costcenter <-
   personnel %>%
-  
-  distinct(
-    costcenter_name_clean, costcenter_clean, categorization,
-    name_clean, title, headcomponent,
-  ) %>% 
-  
-  select(!costcenter_name_clean) %>%
-  bind_rows(costcenters_missing) %>%
-  count(costcenter_clean, categorization) %>%
-  group_by(costcenter_clean) %>%
-  mutate(prop = n / sum(n)) %>%
+  count(costcenter_name, costcenter_id, categorization) %>%
+  mutate(prop = n / sum(n), .by = c(costcenter_name, costcenter_id)) %>%
   select(!n) %>%
-  # group_by(costcenter_clean, categorization) %>% 
-  # summarize(amt_total = sum(amt_total)) %>% 
-  # mutate(prop = amt_total / sum(amt_total)) %>% 
-  # select(!amt_total) %>% 
   pivot_wider(
-    id_cols = costcenter_clean,
+    id_cols = c(costcenter_name, costcenter_id),
     names_from = categorization,
     values_from = prop,
     values_fill = 0.0
-  ) %>%
-  select(costcenter_clean, prop_direct = Direct, prop_indirect = Indirect)
+  )
+
+prop_costcenter
 ```
 
 Occupancy proportions
 
 ```{r}
-occupancy_central <- 
+occupancy_central <-
   personnel %>%
-  
   distinct(
     costcenter_name_clean, costcenter_clean, categorization,
     name_clean, title, headcomponent,
-  ) %>% 
-  
+  ) %>%
   filter(
     !(costcenter_clean %in% c("SCHOOLS", "40104", "40231", "40232")),
     !(costcenter_clean == "40077" & categorization == "Direct")
-  ) %>% 
+  ) %>%
   count(categorization) %>%
   mutate(prop = n / sum(n)) %>%
   select(!n) %>%
-  # group_by(categorization) %>% 
-  # summarize(amt_total = sum(amt_total)) %>% 
-  # mutate(prop = amt_total / sum(amt_total)) %>% 
-  # select(!amt_total) %>% 
+  # group_by(categorization) %>%
+  # summarize(amt_total = sum(amt_total)) %>%
+  # mutate(prop = amt_total / sum(amt_total)) %>%
+  # select(!amt_total) %>%
   pivot_wider(
     names_from = categorization,
     values_from = prop,
     values_fill = 0.0
-  ) %>% 
-  mutate(is_occupancy_central = 1) %>% 
+  ) %>%
+  mutate(is_occupancy_central = 1) %>%
   rename(prop_central_direct = Direct, prop_central_indirect = Indirect)
 
-occupancy_overall <- 
+occupancy_overall <-
   personnel %>%
-  
   distinct(
     costcenter_name_clean, costcenter_clean, categorization,
     name_clean, title, headcomponent,
-  ) %>% 
-  
+  ) %>%
   count(categorization) %>%
   mutate(prop = n / sum(n)) %>%
   select(!n) %>%
-  # group_by(categorization) %>% 
-  # summarize(amt_total = sum(amt_total)) %>% 
-  # mutate(prop = amt_total / sum(amt_total)) %>% 
-  # select(!amt_total) %>% 
+  # group_by(categorization) %>%
+  # summarize(amt_total = sum(amt_total)) %>%
+  # mutate(prop = amt_total / sum(amt_total)) %>%
+  # select(!amt_total) %>%
   pivot_wider(
     names_from = categorization,
     values_from = prop,
     values_fill = 0.0
-  ) %>% 
-  mutate(is_occupancy_overall = 1) %>% 
+  ) %>%
+  mutate(is_occupancy_overall = 1) %>%
   rename(prop_overall_direct = Direct, prop_overall_indirect = Indirect)
-
 ```
 
 #
@@ -204,20 +182,20 @@ nonpersonnel_cat <-
     str_detect(party_name, regex("security assurance", ignore_case = TRUE)) & fund == "1010001" ~ 0.00,
     str_detect(party_name, regex("security assurance", ignore_case = TRUE)) ~ net_accounted,
     .default = amt_direct
-  )) %>% 
+  )) %>%
   mutate(amt_indirect = case_when(
     str_detect(party_name, regex("security assurance", ignore_case = TRUE)) & fund == "1010001" ~ net_accounted,
     str_detect(party_name, regex("security assurance", ignore_case = TRUE)) ~ 0.00,
     .default = amt_indirect
-  )) %>% 
+  )) %>%
   mutate(
     amt_total = amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct + amt_indirect
   ) %>%
   filter(!is.na(amt_total))
 
-nonpersonnel_cat %>% 
-  filter(str_detect(party_name, regex("security assurance", ignore_case = TRUE))) %>% 
-  group_by(fund) %>% 
+nonpersonnel_cat %>%
+  filter(str_detect(party_name, regex("security assurance", ignore_case = TRUE))) %>%
+  group_by(fund) %>%
   summarize(amt_total = sum(amt_total))
 ```
 
@@ -244,8 +222,8 @@ nonpersonnel_cat %>%
     .groups = "drop"
   )
 
-nonpersonnel_cat %>% 
-  group_by(costcenter_name_clean) %>% 
+nonpersonnel_cat %>%
+  group_by(costcenter_name_clean) %>%
   summarize(amt_total = sum(amt_total))
 ```
 

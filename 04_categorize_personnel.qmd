@@ -43,7 +43,7 @@ personnel_categorization <-
     glue("{path_data}/manual/personnel_categorization.xlsx"),
     col_types = c(
       rep("text", 1),
-      rep("logical", 1),
+      rep("logical", 3),
       rep("text", 8),
       rep("numeric", 4),
       rep("logical", 5)
@@ -123,8 +123,7 @@ personnel_categorized <-
   )
 
 personnel_categorized |>
-  filter(is_mixed) |>
-  filter(!position_is_direct)
+  write_parquet(glue("{path_data}/working/personnel_categorized.parquet"))
 ```
 
 # Diagnostic

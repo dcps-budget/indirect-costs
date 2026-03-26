@@ -52,9 +52,10 @@ ledger_full <-
   mutate(
     costcenter_id = case_when(
       is_school ~ "SCHOOL",
-      costcenter_id %in% c("10001", "10002", "10003") ~ "OCFO",
+      costcenter_id %in% c("10001", "10002", "10003", "10040") ~ "OCFO",
+      costcenter_id %in% c("40078", "40203") ~ "40078",
       costcenter_id %in% c(
-        "40080", "40084", "40228", "40229", "40242"
+        "40080", "40084", "40130", "40208", "40228", "40229", "40242"
       ) ~ "OTHER DIRECT",
       costcenter_id %in% c("00000", "40223") ~ "OTHER INDIRECT",
       .default = costcenter_id
@@ -62,6 +63,7 @@ ledger_full <-
     costcenter_name = case_when(
       costcenter_id == "SCHOOL" ~ "SCHOOL",
       costcenter_id == "OCFO" ~ "OFFICE OF THE CHIEF FINANCIAL OFFICER",
+      costcenter_id == "40078" ~ "OFFICE OF OPERATIONS",
       costcenter_id == "OTHER DIRECT" ~ "OTHER DIRECT",
       costcenter_id == "OTHER INDIRECT" ~ "OTHER INDIRECT",
       .default = costcenter_name
@@ -103,9 +105,10 @@ personnel <-
   mutate(
     costcenter_id = case_when(
       is_school ~ "SCHOOL",
-      costcenter_id %in% c("10001", "10002", "10003") ~ "OCFO",
+      costcenter_id %in% c("10001", "10002", "10003", "10040") ~ "OCFO",
+      costcenter_id %in% c("40078", "40203") ~ "40078",
       costcenter_id %in% c(
-        "40080", "40084", "40228", "40229", "40242"
+        "40080", "40084", "40130", "40208", "40228", "40229", "40242"
       ) ~ "OTHER DIRECT",
       costcenter_id %in% c("00000", "40223") ~ "OTHER INDIRECT",
       .default = costcenter_id
@@ -113,6 +116,7 @@ personnel <-
     costcenter_name = case_when(
       costcenter_id == "SCHOOL" ~ "SCHOOL",
       costcenter_id == "OCFO" ~ "OFFICE OF THE CHIEF FINANCIAL OFFICER",
+      costcenter_id == "40078" ~ "OFFICE OF OPERATIONS",
       costcenter_id == "OTHER DIRECT" ~ "OTHER DIRECT",
       costcenter_id == "OTHER INDIRECT" ~ "OTHER INDIRECT",
       .default = costcenter_name
@@ -314,19 +318,19 @@ position_has_school <-
 ```{r}
 personnel <-
   personnel |>
+  left_join(position_has_school, by = join_by(position_id)) |>
   mutate(
     position_is_direct = str_detect(
       position_title, regex(positions_direct, ignore_case = TRUE)
     )
   ) |>
-  left_join(position_has_school, by = join_by(position_id)) |>
   mutate(
     costcenter_id = if_else(
-      position_is_direct & position_has_school, "SCHOOL",
+      position_has_school & position_is_direct, "SCHOOL",
       costcenter_id, missing = costcenter_id
     ),
     costcenter_name = if_else(
-      position_is_direct & position_has_school, "SCHOOL",
+      position_has_school & position_is_direct, "SCHOOL",
       costcenter_name, missing = costcenter_name
     ),
   )
@@ -441,13 +445,36 @@ personnel_clean <-
       employee_id, employee_name
     )
   ) |>
-  left_join(costcenters_categorization, by = join_by(costcenter_id)) |>
+  left_join(costcenters_categorization, by = join_by(costcenter_id))
+
+position_has_direct <-
+  personnel_clean |>
+  filter(is_all_direct) |>
+  distinct(position_id) |>
+  mutate(position_has_direct = TRUE)
+
+position_has_indirect <-
+  personnel_clean |>
+  filter(is_all_indirect) |>
+  distinct(position_id) |>
+  mutate(position_has_indirect = TRUE)
+
+personnel_clean <-
+  personnel_clean |>
+  left_join(position_has_direct, by = join_by(position_id)) |>
+  left_join(position_has_indirect, by = join_by(position_id)) |>
+  mutate(categorization = NA_character_, .before = 0) |>
+  relocate(
+    c(position_has_direct, position_has_indirect),
+    .after = position_has_school
+  ) |>
   relocate(c(position_is_direct), .after = last_col()) |>
   arrange(
     is_school, is_all_direct, is_all_indirect, is_mixed,
     costcenter_name,
     program_name,
-    position_is_direct, position_title, position_has_school,
+    position_is_direct, position_title,
+    position_has_school, position_has_direct, position_has_indirect,
     employee_name
   ) |>
   filter(amt_total != 0.00)

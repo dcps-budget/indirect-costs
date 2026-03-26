@@ -93,7 +93,8 @@ po <-
       collapse = "; "
     ),
     .by = c(po_number, po_title)
-  )
+  ) |>
+  rename(title = po_title)
 ```
 
 # Tidy and Transform
@@ -110,32 +111,43 @@ nonpersonnel <-
     project_id = project, project_name = project_desc,
     award_id = award, award_name = award_desc
   ) |>
-  filter(agency_id == "GA0" | ((project_id %in% r209$project_id))) |>
-  filter(net_accounted != 0.00) |>
   left_join(costcenters, by = join_by(costcenter_id)) |>
   mutate(
-    costcenter_id = if_else(
-      is_school, "SCHOOL", costcenter_id, missing = costcenter_id
+    costcenter_id = case_when(
+      is_school ~ "SCHOOL",
+      costcenter_id %in% c("10001", "10002", "10003", "10040") ~ "OCFO",
+      costcenter_id %in% c("40078", "40203") ~ "40078",
+      costcenter_id %in% c(
+        "40080", "40084", "40130", "40208", "40228", "40229", "40242"
+      ) ~ "OTHER DIRECT",
+      costcenter_id %in% c("00000", "40223") ~ "OTHER INDIRECT",
+      .default = costcenter_id
     ),
-    costcenter_name = if_else(
-      is_school, "SCHOOL", costcenter_name, missing = costcenter_name
+    costcenter_name = case_when(
+      costcenter_id == "SCHOOL" ~ "SCHOOL",
+      costcenter_id == "OCFO" ~ "OFFICE OF THE CHIEF FINANCIAL OFFICER",
+      costcenter_id == "40078" ~ "OFFICE OF OPERATIONS",
+      costcenter_id == "OTHER DIRECT" ~ "OTHER DIRECT",
+      costcenter_id == "OTHER INDIRECT" ~ "OTHER INDIRECT",
+      .default = costcenter_name
     ),
-  )
+  ) |>
+  filter(agency_id == "GA0" | ((project_id %in% r209$project_id))) |>
+  filter(net_accounted != 0.00)
+```
 
-nonpersonnel_costcenter_account <-
+```{r}
+costcenters_nonzero <-
   nonpersonnel |>
   summarize(
-    net_accounted = sum(net_accounted),
-    .by = c(costcenter_id, account_id)
+    net_accounted = round(sum(net_accounted), 2),
+    .by = costcenter_id
   ) |>
   filter(net_accounted != 0.00)
 
 nonpersonnel <-
   nonpersonnel |>
-  semi_join(
-    nonpersonnel_costcenter_account,
-    by = join_by(costcenter_id, account_id)
-  )
+  filter(costcenter_id %in% costcenters_nonzero$costcenter_id)
 
 nonpersonnel |>
   pull(net_accounted) |>
@@ -236,11 +248,22 @@ po_detail <-
   po_costcenters |>
   left_join(po_accounts, by = join_by(po_number)) |>
   left_join(po, by = join_by(po_number)) |>
+  mutate(categorization = NA_character_) |>
+  mutate(likely_not_excluded = str_detect(items, regex(
+    "name (of )*(the )*resource|resource name",
+    ignore_case = TRUE
+  ))) |>
   relocate(
-    c(suppliers, costcenter_names, po_title, items, po_total),
-    .after = po_number
+    c(
+      categorization, likely_not_excluded,
+      suppliers, items, title, costcenter_names, po_number, po_total
+    ),
+    .before = 0
   ) |>
-  arrange(suppliers, costcenter_names, po_title, items, po_number)
+  arrange(
+    likely_not_excluded,
+    suppliers, items, title, costcenter_names, po_number
+  )
 
 po_detail |> write_csv(glue("{path_data}/working/po_detail.csv"), na = "")
 ```
