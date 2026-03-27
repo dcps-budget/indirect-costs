@@ -30,15 +30,6 @@ costcenters <-
 ```
 
 ```{r}
-# pos_cat_prev <-
-#   read_excel(
-#     glue("{path_working}/Previous Categorization - PO.xlsx"),
-#     col_types = "text"
-#   ) |>
-#   clean_names() |>
-#   mutate(across(po_number, str_squish)) |>
-#   distinct(po_number, po_categorization_previous)
-#
 # grants <-
 #   read_excel(
 #     glue("{path_working}/Grants good.xlsx"),
@@ -231,14 +222,12 @@ po_costcenters <-
 
 po_accounts <-
   nonpersonnel_po |>
-  mutate(account_combo = str_c(account_id, " || ", account_name)) |>
   summarize(
-    net_accounted = sum(net_accounted), .by = c(po_number, account_combo)
+    net_accounted = sum(net_accounted), .by = c(po_number, account_id)
   ) |>
-  filter(net_accounted != 0.00) |>
   pivot_wider(
     id_cols = po_number,
-    names_from = account_combo, values_from = net_accounted, names_sort = TRUE
+    names_from = account_id, values_from = net_accounted, names_sort = TRUE
   ) |>
   rowwise() |>
   mutate(po_total = sum(c_across(starts_with("713")), na.rm = TRUE)) |>
@@ -263,7 +252,8 @@ po_detail <-
   arrange(
     likely_not_excluded,
     suppliers, items, title, costcenter_names, po_number
-  )
+  ) |>
+  filter(po_total != 0.00)
 
 po_detail |> write_csv(glue("{path_data}/working/po_detail.csv"), na = "")
 ```

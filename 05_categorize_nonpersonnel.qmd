@@ -28,31 +28,50 @@ nonpersonnel <-
 personnel <-
   read_parquet(
     glue("{path_data}/working/personnel_categorized.parquet")
-  )
-
-accounts <-
-  read_excel(
-    glue("{path_data}/manual/accounts_categorization.xlsx")
-  )
-
-po <-
-  read_excel(
-    glue("{path_data}/manual/po_categorization.xlsx")
-  )
-```
-
-```{r}
-personnel <-
-  personnel |>
+  ) |>
   distinct(
     categorization,
     costcenter_id, costcenter_name,
     position_id, position_title,
     employee_id, employee_name,
   )
+
+accounts <-
+  read_excel(
+    glue("{path_data}/manual/accounts_categorization.xlsx"),
+    col_types = c(rep("text", 2), rep("logical", 10))
+  ) |>
+  select(!account_name)
+
+po <-
+  read_excel(
+    glue("{path_data}/manual/po_categorization.xlsx"),
+    col_types = c(
+      rep("text", 1), rep("logical", 1), rep("text", 5), rep("numeric", 9)
+    )
+  )
 ```
 
-# Personnel proportions by cost center
+```{r}
+dummy <-
+  po |>
+  distinct(po_number) |>
+  rowwise() |>
+  mutate(
+    categorization = sample(c("direct", "indirect", "excluded"), size = 1)
+  ) |>
+  ungroup()
+
+po <-
+  po |>
+  rows_patch(dummy, by = "po_number") |>
+  pivot_longer(
+    cols = starts_with("713"), names_to = "account_id", values_drop_na = TRUE
+  ) |>
+  select(po_number, account_id, po_categorization = categorization)
+```
+
+# Personnel Proportions
 
 ```{r}
 nonpersonnel |>
@@ -63,168 +82,142 @@ nonpersonnel |>
 ```
 
 ```{r}
-prop_costcenter <-
-  personnel %>%
-  count(costcenter_name, costcenter_id, categorization) %>%
-  mutate(prop = n / sum(n), .by = c(costcenter_name, costcenter_id)) %>%
-  select(!n) %>%
+costcenters_prop <-
+  personnel |>
+  count(costcenter_id, categorization) |>
+  mutate(prop = n / sum(n), .by = c(costcenter_id)) |>
+  select(!n) |>
   pivot_wider(
-    id_cols = c(costcenter_name, costcenter_id),
+    id_cols = c(costcenter_id),
     names_from = categorization,
     values_from = prop,
     values_fill = 0.0
   )
 
-prop_costcenter
+costcenters_prop
 ```
 
-Occupancy proportions
+# Occupancy
+
+Central
 
 ```{r}
 occupancy_central <-
-  personnel %>%
-  distinct(
-    costcenter_name_clean, costcenter_clean, categorization,
-    name_clean, title, headcomponent,
-  ) %>%
-  filter(
-    !(costcenter_clean %in% c("SCHOOLS", "40104", "40231", "40232")),
-    !(costcenter_clean == "40077" & categorization == "Direct")
-  ) %>%
-  count(categorization) %>%
-  mutate(prop = n / sum(n)) %>%
-  select(!n) %>%
-  # group_by(categorization) %>%
-  # summarize(amt_total = sum(amt_total)) %>%
-  # mutate(prop = amt_total / sum(amt_total)) %>%
-  # select(!amt_total) %>%
+  personnel |>
+  filter_out(
+    costcenter_id %in% c(
+      "SCHOOL",
+      "40104" # schoolwide services division
+    )
+  ) |>
+  filter_out(
+    categorization == "direct" & costcenter_id %in% c(
+      "40077", # office of operations
+      "40232" # federal programs
+    )
+  ) |>
+  count(categorization) |>
+  mutate(prop = n / sum(n)) |>
+  select(!n) |>
   pivot_wider(
     names_from = categorization,
     values_from = prop,
     values_fill = 0.0
-  ) %>%
-  mutate(is_occupancy_central = 1) %>%
-  rename(prop_central_direct = Direct, prop_central_indirect = Indirect)
-
-occupancy_overall <-
-  personnel %>%
-  distinct(
-    costcenter_name_clean, costcenter_clean, categorization,
-    name_clean, title, headcomponent,
-  ) %>%
-  count(categorization) %>%
-  mutate(prop = n / sum(n)) %>%
-  select(!n) %>%
-  # group_by(categorization) %>%
-  # summarize(amt_total = sum(amt_total)) %>%
-  # mutate(prop = amt_total / sum(amt_total)) %>%
-  # select(!amt_total) %>%
-  pivot_wider(
-    names_from = categorization,
-    values_from = prop,
-    values_fill = 0.0
-  ) %>%
-  mutate(is_occupancy_overall = 1) %>%
-  rename(prop_overall_direct = Direct, prop_overall_indirect = Indirect)
+  ) |>
+  mutate(is_occupancy_central = TRUE) |>
+  rename(prop_central_direct = direct, prop_central_indirect = indirect)
 ```
 
-#
+Overall
 
 ```{r}
-nonpersonnel_cat <-
-  nonpersonnel %>%
-  left_join(cat_po, by = join_by(po_number, account)) %>%
-  left_join(accounts, by = join_by(account)) %>%
-  left_join(props_costcenter, by = join_by(costcenter_clean)) %>%
-  left_join(occupancy_central, by = join_by(is_occupancy_central)) %>%
-  left_join(occupancy_overall, by = join_by(is_occupancy_overall)) %>%
-  # cleanup
+occupancy_overall <-
+  personnel |>
+  count(categorization) |>
+  mutate(prop = n / sum(n)) |>
+  select(!n) |>
+  pivot_wider(
+    names_from = categorization,
+    values_from = prop,
+    values_fill = 0.0
+  ) |>
+  mutate(is_occupancy_overall = TRUE) |>
+  rename(prop_overall_direct = direct, prop_overall_indirect = indirect)
+```
+
+# Categorization Amounts
+
+```{r}
+nonpersonnel_categorized <-
+  nonpersonnel |>
+  left_join(accounts, by = join_by(account_id)) |>
+  left_join(po, by = join_by(po_number, account_id)) |>
+  left_join(occupancy_central, by = join_by(is_occupancy_central)) |>
+  left_join(occupancy_overall, by = join_by(is_occupancy_overall)) |>
+  left_join(costcenters_prop, by = join_by(costcenter_id)) |>
   mutate(
     is_excluded = case_when(
-      is_capital == "TRUE" ~ 1,
+      is_capital ~ TRUE,
       .default = is_excluded
     )
-  ) %>%
-  #
+  ) |>
   mutate(
-    amt_nonbudgetary = if_else(is_nonbudgetary == 1, net_accounted, 0, missing = 0),
-    amt_unallowable = if_else(is_unallowable == 1, net_accounted, 0, missing = 0)
-  ) %>%
+    amt_nonbudgetary = if_else(
+      is_nonbudgetary, net_accounted, 0.00, missing = 0.00
+    ),
+    amt_unallowable = if_else(
+      is_unallowable, net_accounted, 0.00, missing = 0.00
+    )
+  ) |>
   mutate(amt_excluded = case_when(
-    is_nonbudgetary == 1 ~ 0.00,
-    is_unallowable == 1 ~ 0.00,
-    is_po == "TRUE" & cat_po == "Excluded" ~ net_accounted,
-    is_po == "FALSE" & is_occupancy == 1 ~ 0.00,
-    is_po == "FALSE" & is_excluded == 1 ~ net_accounted,
+    is_nonbudgetary ~ 0.00,
+    is_unallowable ~ 0.00,
+    is_excluded ~ net_accounted,
+    is_po & (
+      is.na(po_categorization) | po_categorization == "excluded"
+    ) ~ net_accounted,
     .default = 0.00
-  )) %>%
+  )) |>
   mutate(amt_direct = case_when(
-    is_po == "TRUE" & cat_po == "Direct" ~ net_accounted,
-    is_po == "TRUE" ~ 0.00,
-    is_po == "FALSE" & is_occupancy_central == 1 ~ net_accounted * prop_central_direct,
-    is_po == "FALSE" & is_occupancy_overall == 1 ~ net_accounted * prop_overall_direct,
-    is_po == "FALSE" & is_excluded == 1 ~ 0.00,
-    is_nonbudgetary == 1 ~ 0.00,
-    is_unallowable == 1 ~ 0.00,
-    .default = net_accounted * prop_direct
-  )) %>%
+    is_nonbudgetary ~ 0.00,
+    is_unallowable ~ 0.00,
+    is_excluded ~ 0.00,
+    is_po & po_categorization == "direct" ~ net_accounted,
+    is_po ~ 0.00,
+    !is_po & is_occupancy_central ~ net_accounted * prop_central_direct,
+    !is_po & is_occupancy_overall ~ net_accounted * prop_overall_direct,
+    .default = net_accounted * direct
+  )) |>
   mutate(amt_indirect = case_when(
-    is_po == "TRUE" & cat_po == "Indirect" ~ net_accounted,
-    is_po == "TRUE" ~ 0.00,
-    is_po == "FALSE" & is_occupancy_central == 1 ~ net_accounted * prop_central_indirect,
-    is_po == "FALSE" & is_occupancy_overall == 1 ~ net_accounted * prop_overall_indirect,
-    is_po == "FALSE" & is_excluded == 1 ~ 0.00,
-    is_nonbudgetary == 1 ~ 0.00,
-    is_unallowable == 1 ~ 0.00,
-    .default = net_accounted * prop_indirect
-  )) %>%
-  mutate(amt_direct = case_when(
-    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) & fund == "1010001" ~ 0.00,
-    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) ~ net_accounted,
-    .default = amt_direct
-  )) %>%
-  mutate(amt_indirect = case_when(
-    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) & fund == "1010001" ~ net_accounted,
-    str_detect(party_name, regex("security assurance", ignore_case = TRUE)) ~ 0.00,
-    .default = amt_indirect
-  )) %>%
+    is_nonbudgetary ~ 0.00,
+    is_unallowable ~ 0.00,
+    is_excluded ~ 0.00,
+    is_po & po_categorization == "indirect" ~ net_accounted,
+    is_po ~ 0.00,
+    !is_po & is_occupancy_central ~ net_accounted * prop_central_indirect,
+    !is_po & is_occupancy_overall ~ net_accounted * prop_overall_indirect,
+    .default = net_accounted * indirect
+  )) |>
   mutate(
     amt_total = amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct + amt_indirect
-  ) %>%
+  ) |>
   filter(!is.na(amt_total))
-
-nonpersonnel_cat %>%
-  filter(str_detect(party_name, regex("security assurance", ignore_case = TRUE))) %>%
-  group_by(fund) %>%
-  summarize(amt_total = sum(amt_total))
 ```
 
 ```{r}
-nonpersonnel_cat %>% write_csv("data/csv/nonpersonnel_cat.csv", na = "")
+# nonpersonnel_cat |> write_csv("data/csv/nonpersonnel_cat.csv", na = "")
 ```
 
 # Diagnostics
 
-316370142.98
-
 ```{r}
-nonpersonnel_cat %>%
-  pull(amt_total) %>%
+nonpersonnel |>
+  pull(net_accounted) |>
   sum()
-```
 
-```{r}
-nonpersonnel_cat %>%
-  filter(is.na(amt_total)) %>%
-  group_by(costcenter_clean, costcenter_name_clean, account_name) %>%
-  summarize(
-    net_accounted = sum(net_accounted), n_transactions = n(),
-    .groups = "drop"
-  )
-
-nonpersonnel_cat %>%
-  group_by(costcenter_name_clean) %>%
-  summarize(amt_total = sum(amt_total))
+nonpersonnel_categorized |>
+  pull(amt_total) |>
+  sum()
 ```
 
 ```{r}
