@@ -113,11 +113,15 @@ personnel_categorized <-
     ),
     amt_headcomp_total = amt_headcomp_direct + amt_headcomp_indirect,
     amt_terminal_to_indirect = if_else(
-      when_all(categorization == "direct", headcomp == "normal"),
+      when_all(
+        categorization == "direct"
+      ),
       amt_terminal, 0.00
     ),
     amt_terminal_restricted = if_else(
-      headcomp != "non-executive",
+      when_all(
+        headcomp %in% c("executive", "head")
+      ),
       amt_terminal, 0.00
     )
   )

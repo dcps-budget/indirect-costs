@@ -3,150 +3,126 @@ title: "Generate Schedules"
 format: html
 ---
 
+# Setup
+
 ```{r}
 library(tidyverse)
 library(glue)
 library(janitor)
 library(readxl)
 library(writexl)
+library(arrow)
 
 options(scipen = 12, digits = 12)
+
+path_data <- Sys.getenv("PATH_DATA")
+year_fiscal <- Sys.getenv("YEAR_FISCAL")
 ```
 
-Setup
+# Import
 
 ```{r}
-path_data <- glue(
-  "C:/Users",
-  "{Sys.getenv('USERNAME')}",
-  "OneDrive - District of Columbia Public Schools",
-  "Data",
-  .sep = "/"
-)
-```
-
-Read
-
-```{r}
-ledger <- read_csv(
-  "data/csv/ledger.csv",
-  col_types = cols(ending_balance = col_double(), .default = col_character())
-)
+ledger <- read_parquet(glue("{path_data}/working/ledger.parquet"))
 
 personnel_categorized <-
-  read_csv(
-    "data/csv/personnel.csv",
-    col_types = cols(
-      amt_salary = col_double(),
-      amt_benefits = col_double(),
-      amt_direct = col_double(),
-      amt_indirect = col_double(),
-      amt_total = col_double(),
-      amt_unrestricted = col_double(),
-      amt_headcomponent_direct = col_double(),
-      amt_headcomponent_indirect = col_double(),
-      amt_headcomponent_total = col_double(),
-      amt_terminal = col_double(),
-      amt_terminal_to_indirect = col_double(),
-      amt_terminal_restricted = col_double(),
-      .default = col_character()
-    )
-  )
+  read_parquet(glue("{path_data}/working/personnel_categorized.parquet"))
 
 nonpersonnel_categorized <-
-  read_csv(
-    "data/csv/nonpersonnel_cat.csv",
-    col_types = cols(
-      amt_nonbudgetary = col_double(),
-      amt_unallowable = col_double(),
-      amt_excluded = col_double(),
-      amt_direct = col_double(),
-      amt_indirect = col_double(),
-      amt_total = col_double(),
-      .default = col_character()
-    )
-  )
+  read_parquet(glue("{path_data}/working/nonpersonnel_categorized.parquet"))
 ```
+
+```{r}
+fct_costcenters <- function(df) {
+  df |>
+    mutate(costcenter_name = fct_relevel(
+      costcenter_name,
+      "SCHOOL"
+    )) |>
+    mutate(costcenter_name = fct_relevel(
+      costcenter_name,
+      c("OTHER DIRECT", "OTHER INDIRECT"),
+      after = Inf
+    ))
+}
+```
+
+# Schedules
 
 A
 
 ```{r}
 personnel_by_costcenter <-
-  personnel_categorized %>%
-  group_by(costcenter_clean) %>%
+  personnel_categorized |>
   summarize(
     amt_direct_ps = sum(amt_direct),
     amt_indirect_ps = sum(amt_indirect),
-    amt_total_ps = sum(amt_total),
-    .groups = "drop"
+    amt_ps = sum(amt_total),
+    .by = c(costcenter_name, costcenter_id)
   )
 
 nonpersonnel_by_costcenter <-
-  nonpersonnel_categorized %>%
-  group_by(costcenter_clean) %>%
+  nonpersonnel_categorized |>
   summarize(
     amt_nonbudgetary = sum(amt_nonbudgetary),
     amt_unallowable = sum(amt_unallowable),
     amt_excluded = sum(amt_excluded),
     amt_direct_nps = sum(amt_direct),
     amt_indirect_nps = sum(amt_indirect),
-    .groups = "drop"
-  ) %>%
+    .by = costcenter_id
+  ) |>
   mutate(
-    amt_budgetary = amt_unallowable + amt_excluded + amt_direct_nps + amt_indirect_nps,
-    amt_unallowable_excluded = amt_unallowable + amt_excluded,
-    amt_total_nps = amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct_nps + amt_indirect_nps,
+    amt_nps = amt_unallowable + amt_excluded + amt_direct_nps + amt_indirect_nps,
   )
 
 schedule_a <-
-  bind_rows(
-    select(personnel_categorized, costcenter_name_clean, costcenter_clean),
-    select(nonpersonnel_categorized, costcenter_name_clean, costcenter_clean)
-  ) %>%
-  distinct() %>%
-  left_join(personnel_by_costcenter, by = join_by(costcenter_clean)) %>%
-  left_join(nonpersonnel_by_costcenter, by = join_by(costcenter_clean)) %>%
-  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>%
+  personnel_by_costcenter |>
+  left_join(nonpersonnel_by_costcenter, by = join_by(costcenter_id)) |>
   mutate(
     amt_direct = amt_direct_ps + amt_direct_nps,
     amt_indirect = amt_indirect_ps + amt_indirect_nps,
-    amt_total = amt_total_ps + amt_total_nps
-  ) %>%
+    amt_budgetary = amt_ps + amt_nps
+  ) |>
   select(
-    costcenter_clean, costcenter_name_clean,
-    amt_total, amt_unallowable_excluded,
-    amt_direct_ps, amt_direct_nps, amt_direct,
-    amt_indirect_ps, amt_indirect_nps, amt_indirect
-  ) %>%
-  arrange(costcenter_name_clean)
+    costcenter_name,
+    amt_budgetary,
+    amt_direct, amt_indirect,
+    amt_excluded, amt_unallowable,
+    amt_direct_ps, amt_direct_nps,
+    amt_indirect_ps, amt_indirect_nps,
+  ) |>
+  fct_costcenters() |>
+  arrange(costcenter_name)
 
-schedule_a %>% write_xlsx("schedules/schedule_a.xlsx")
+schedule_a |> write_csv(glue("{path_data}/schedules/schedule_a.csv"), na = "")
 ```
 
 D.1
 
 ```{r}
 schedule_d1 <-
-  personnel_categorized %>%
-  select(!starts_with("amt_terminal")) %>%
-  group_by(
-    costcenter_name_clean, categorization,
-    name_clean, title, headcomponent,
-  ) %>%
+  personnel_categorized |>
+  select(!starts_with("amt_terminal")) |>
   summarize(
     amt_salary = sum(amt_salary),
     amt_benefits = sum(amt_benefits),
+    amt_total = sum(amt_total),
     amt_direct = sum(amt_direct),
     amt_indirect = sum(amt_indirect),
     amt_unrestricted = sum(amt_unrestricted),
-    amt_headcomponent_direct = sum(amt_headcomponent_direct),
-    amt_headcomponent_indirect = sum(amt_headcomponent_indirect),
-    amt_headcomponent_total = sum(amt_headcomponent_total),
-    .groups = "drop"
-  ) %>%
-  relocate(categorization)
+    amt_headcomp_direct = sum(amt_headcomp_direct),
+    amt_headcomp_indirect = sum(amt_headcomp_indirect),
+    amt_headcomp_total = sum(amt_headcomp_total),
+    .by = c(
+      costcenter_name, position_title, categorization, employee_name, headcomp
+    )
+  ) |>
+  fct_costcenters() |> 
+  relocate(categorization) |> 
+  arrange(
+    costcenter_name, headcomp, position_title, categorization, employee_name
+  )
 
-schedule_d1 %>% write_xlsx("schedules/schedule_d1.xlsx")
+schedule_d1 |> write_csv(glue("{path_data}/schedules/schedule_d1.csv"), na = "")
 ```
 
 D.2
@@ -157,82 +133,76 @@ fringe_other <- c(
   "MISC FRINGE BENEFITS",
   "RETIREMENT CONTRIBUTION - CIVIL SERVICE",
   "RETIREMENT CONTRIBUTION - TEACHERS",
+  "RETIREMENT CONTRIBUTION - OTHER",
   "UNEMPLOYMENT INSURANCE"
 )
 
 fringe <-
-  ledger %>%
-  filter(account_class_desc == "FRINGE BENEFITS - CURR PERSONNEL") %>%
+  ledger |>
+  filter(account_class_desc == "FRINGE BENEFITS - CURR PERSONNEL") |>
   mutate(
     account_name = if_else(
       account_name %in% fringe_other, "OTHER", account_name
     )
-  ) %>%
-  group_by(account_name) %>%
-  summarize(ending_balance = sum(ending_balance)) %>%
-  mutate(is_other = account_name == "OTHER") %>%
+  ) |>
+  summarize(ending_balance = sum(ending_balance), .by = account_name) |>
+  mutate(is_other = account_name == "OTHER") |>
   arrange(is_other, desc(ending_balance))
 
 fringe_total <-
-  fringe %>%
-  summarize(ending_balance = sum(ending_balance)) %>%
+  fringe |>
+  summarize(ending_balance = sum(ending_balance)) |>
   mutate(account_name = "TOTAL", .before = 0)
 
 schedule_d2 <-
-  fringe %>%
-  filter(ending_balance != 0.00) %>%
-  bind_rows(fringe_total) %>%
+  fringe |>
+  filter(ending_balance != 0.00) |>
+  bind_rows(fringe_total) |>
   select(!is_other)
 
-schedule_d2 %>% write_xlsx("schedules/schedule_d2.xlsx")
-
-personnel_categorized %>%
-  group_by(categorization) %>%
-  summarize(amt_benefits = sum(amt_benefits), .groups = "drop")
+schedule_d2 |> write_csv(glue("{path_data}/schedules/schedule_d2.csv"), na = "")
 ```
 
 E
 
 ```{r}
 schedule_e <-
-  personnel_categorized %>%
-  filter(amt_terminal != 0.00) %>%
+  personnel_categorized |>
+  filter(amt_terminal != 0.00) |>
   select(!c(
     amt_salary, amt_benefits, amt_total,
     amt_direct, amt_indirect, amt_unrestricted,
-    amt_headcomponent_direct, amt_headcomponent_indirect, amt_headcomponent_total
-  )) %>%
-  group_by(
-    costcenter_name_clean, categorization,
-    name_clean, title, headcomponent,
-  ) %>%
+    amt_headcomp_direct, amt_headcomp_indirect, amt_headcomp_total
+  )) |>
   summarize(
     amt_terminal = sum(amt_terminal),
     amt_terminal_unrestricted = sum(amt_terminal_to_indirect),
     amt_terminal_restricted = sum(amt_terminal_restricted),
-    .groups = "drop"
-  ) %>%
+    .by = c(
+      costcenter_name, categorization,
+      employee_name, position_title, headcomp
+    )
+  ) |>
   relocate(categorization)
 
-schedule_e %>% write_xlsx("schedules/schedule_e.xlsx")
+schedule_e |> write_csv(glue("{path_data}/schedules/schedule_e.csv"), na = "")
 ```
 
 F
 
 ```{r}
 schedule_f <-
-  nonpersonnel_categorized %>%
-  filter(is_po == TRUE) %>%
-  group_by(costcenter_name_clean, po_number, party_name) %>%
+  nonpersonnel_categorized |>
+  filter(is_po) |>
   summarize(
     amt_total = sum(amt_total),
     amt_unallowable = sum(amt_unallowable),
     amt_excluded = sum(amt_excluded),
     amt_direct = sum(amt_direct),
     amt_indirect = sum(amt_indirect),
-    .groups = "drop"
-  ) %>%
-  filter(amt_total != 0.00) %>%
+    .by = c(costcenter_name, po_number, party_name)
+  ) |>
+  filter(amt_total != 0.00) |>
   mutate(note = case_when(
     amt_direct != 0.00 & amt_indirect != 0.00 ~ "Subaward consists of both direct and indirect services.",
     amt_direct != 0.00 ~ "Some expenses moved to Direct Cost Pool for provision of FTE-like services.",
@@ -240,133 +210,123 @@ schedule_f <-
     .default = NA_character_
   ))
 
-schedule_f %>% write_xlsx("schedules/schedule_f.xlsx")
+schedule_f |> write_csv(glue("{path_data}/schedules/schedule_f.csv"), na = "")
 ```
 
-Schedule H: Occupancy
+H
 
 ```{r}
 occupancy <-
-  nonpersonnel_categorized %>%
-  filter(is_occupancy == 1)
+  nonpersonnel_categorized |>
+  filter(is_occupancy)
 
 occupancy_total <-
-  occupancy %>%
+  occupancy |>
   summarize(
     amt_total = sum(amt_total),
     amt_direct = sum(amt_direct),
     amt_indirect = sum(amt_indirect)
-  ) %>%
+  ) |>
   mutate(account_name = "OCCUPANCY TOTAL")
 
 schedule_h <-
-  occupancy %>%
-  group_by(account_name) %>%
+  occupancy |>
+  group_by(account_name) |>
   summarize(
     amt_total = sum(amt_total),
     amt_direct = sum(amt_direct),
     amt_indirect = sum(amt_indirect)
-  ) %>%
-  arrange(desc(amt_total)) %>%
+  ) |>
+  arrange(desc(amt_total)) |>
   bind_rows(occupancy_total)
 
-schedule_h %>% write_xlsx("schedules/schedule_h.xlsx")
+schedule_h |> write_csv(glue("{path_data}/schedules/schedule_h.csv"), na = "")
 ```
 
 I
 
 ```{r}
 schedule_i <-
-  nonpersonnel_categorized %>%
-  filter(amt_excluded != 0.00) %>%
+  nonpersonnel_categorized |>
+  # filter(amt_excluded != 0.00) |>
   mutate(exclusion_type = case_when(
     !is.na(is_excluded_food) ~ "food",
     !is.na(is_excluded_equipment) ~ "equipment",
     !is.na(is_excluded_passthrough) ~ "passthrough",
-    is_capital == "TRUE" ~ "capital",
-    # is_grant == "TRUE" ~ "grant",
-    is_po == "TRUE" ~ "subaward"
-  )) %>%
-  group_by(costcenter_name_clean, exclusion_type) %>%
-  summarize(amt_excluded = sum(amt_excluded), .groups = "drop") %>%
-  arrange((costcenter_name_clean), (amt_excluded)) %>%
+    is_capital ~ "capital",
+    is_po ~ "subaward"
+  )) |>
+  summarize(amt_excluded = sum(amt_excluded), .by = c(costcenter_name, exclusion_type)) |>
   pivot_wider(
     names_from = exclusion_type,
     values_from = amt_excluded,
     names_sort = TRUE
-  ) %>%
-  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>%
-  relocate(c(capital, equipment, food, passthrough), .after = costcenter_name_clean)
+  ) |>
+  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) |>
+  relocate(c(capital, equipment, food, passthrough), .after = costcenter_name)
 
-schedule_i %>% write_xlsx("schedules/schedule_i.xlsx")
+schedule_i |> write_csv(glue("{path_data}/schedules/schedule_i.csv"), na = "")
 ```
 
-Schedule J: Indirect Costs
+J
 
 ```{r}
 schedule_j_indirect <-
-  nonpersonnel_categorized %>%
-  group_by(costcenter_name_clean) %>%
-  summarize(amt_indirect = sum(amt_indirect), .groups = "drop") %>%
-  filter(amt_indirect != 0.00) %>%
-  arrange(costcenter_name_clean)
+  nonpersonnel_categorized |>
+  summarize(amt_indirect = sum(amt_indirect), .by = costcenter_name)
 
 schedule_j_unallowable <-
-  nonpersonnel_categorized %>%
+  nonpersonnel_categorized |>
   mutate(
     across(account_name, \(x) if_else(str_detect(x, "^INT "), "INT PENALTIES", account_name)),
     across(account_name, \(x) if_else(x %in% c("ADVERTISING", "MARKETING"), "ADVERTISING AND MARKETING", account_name))
-  ) %>%
-  group_by(costcenter_name_clean, account_name) %>%
-  summarize(amt_unallowable = sum(amt_unallowable), .groups = "drop") %>%
-  filter(amt_unallowable != 0.00) %>%
-  arrange(account_name, costcenter_name_clean) %>%
+  ) |>
+  group_by(costcenter_name, account_name) |>
+  summarize(amt_unallowable = sum(amt_unallowable), .groups = "drop") |>
+  filter(amt_unallowable != 0.00) |>
   pivot_wider(names_from = account_name, values_from = amt_unallowable)
 
 schedule_j <-
-  schedule_j_indirect %>%
-  full_join(schedule_j_unallowable, by = join_by(costcenter_name_clean)) %>%
-  mutate(across(where(is_double), \(x) replace_na(x, 0.00))) %>%
-  # relocate(GENERAL, .after = amt_indirect) %>%
-  arrange(costcenter_name_clean)
+  schedule_j_indirect |>
+  left_join(schedule_j_unallowable, by = join_by(costcenter_name)) |>
+  mutate(across(where(is_double), \(x) replace_na(x, 0.00)))
 
-schedule_j %>% write_xlsx("schedules/schedule_j.xlsx")
+schedule_j |> write_csv(glue("{path_data}/schedules/schedule_j.csv"), na = "")
 ```
 
 K
 
 ```{r}
-props_headcomponent <-
-  personnel_categorized %>%
-  group_by(costcenter_clean) %>%
+props_headcomp <-
+  personnel_categorized |>
   summarize(
-    n_headcomponent = sum(headcomponent != "Non-executive" & categorization == "Indirect"),
-    n_indirect = sum(categorization == "Indirect"),
-    .groups = "drop"
-  ) %>%
-  filter(n_indirect > 0) %>%
-  mutate(prop_headcomponent = n_headcomponent / n_indirect)
+    n_headcomp = sum(headcomp %in% c("executive", "head") & categorization == "indirect"),
+    n_indirect = sum(categorization == "indirect"),
+    .by = costcenter_id
+  ) |>
+  mutate(prop_headcomp = n_headcomp / n_indirect)
 
 schedule_k <-
-  nonpersonnel_categorized %>%
-  filter(is_salaryadjustment == "1") %>%
+  nonpersonnel_categorized |>
+  filter(is_salaryadjustment) |>
   mutate(account_name = case_when(
     account_name %in% c("FUEL AUTOMOTIVE", "GAS") ~ "FUEL",
     account_name %in% c("IT HARDWARE ACQUISITIONS", "IT SOFTWARE ACQUISITIONS", "IT SUPPLIES") ~ "IT",
     account_name %in% c("TRAVEL - LOCAL", "TRAVEL - OUT OF CITY") ~ "TRAVEL",
     .default = account_name
-  )) %>%
-  group_by(costcenter_clean, costcenter_name_clean, account_name) %>%
-  summarize(amt_indirect = sum(amt_indirect), .groups = "drop") %>%
-  left_join(props_headcomponent, by = join_by(costcenter_clean)) %>%
-  mutate(amt_salaryadjustment = prop_headcomponent * amt_indirect) %>%
-  filter(!is.na(n_headcomponent), amt_salaryadjustment != 0.00) %>%
-  select(!c(amt_indirect, n_headcomponent, n_indirect, prop_headcomponent)) %>%
-  arrange(costcenter_name_clean) %>%
-  pivot_wider(names_from = account_name, values_from = amt_salaryadjustment, names_sort = TRUE) %>%
+  )) |>
+  summarize(
+    amt_indirect = sum(amt_indirect),
+    .by = c(costcenter_id, costcenter_name, account_name)
+  ) |>
+  left_join(props_headcomp, by = join_by(costcenter_id)) |>
+  mutate(amt_salaryadjustment = prop_headcomp * amt_indirect) |>
+  filter(!is.na(n_headcomp), amt_salaryadjustment != 0.00) |>
+  select(!c(amt_indirect, n_headcomp, n_indirect, prop_headcomp)) |>
+  pivot_wider(names_from = account_name, values_from = amt_salaryadjustment, names_sort = TRUE) |>
   mutate(across(where(is_double), \(x) replace_na(x, 0.00)))
 
-schedule_k %>% write_xlsx("schedules/schedule_k.xlsx")
+schedule_k |> write_csv(glue("{path_data}/schedules/schedule_k.csv"), na = "")
 ```
 
 ```{r}

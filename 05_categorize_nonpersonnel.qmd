@@ -205,7 +205,8 @@ nonpersonnel_categorized <-
 ```
 
 ```{r}
-# nonpersonnel_cat |> write_csv("data/csv/nonpersonnel_cat.csv", na = "")
+nonpersonnel_categorized |>
+  write_parquet(glue("{path_data}/working/nonpersonnel_categorized.parquet"))
 ```
 
 # Diagnostics
