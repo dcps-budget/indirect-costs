@@ -27,14 +27,56 @@ Cost center categorization.
 costcenters <-
   read_excel(glue("{path_data}/manual/costcenters_categorization.xlsx")) |>
   select(costcenter_id, is_school)
+
+previous <-
+  read_csv(
+    glue("{path_data}/previous/nonpersonnel_previous.csv"),
+    col_types = cols(.default = col_character())
+  ) |>
+  filter(!is.na(po_number)) |>
+  distinct(
+    po_number,
+    cat_prev = cat_po
+  ) |>
+  mutate(cat_prev = case_when(
+    cat_prev == "Direct" ~ "direct",
+    cat_prev == "Indirect" ~ "indirect",
+    cat_prev == "Excluded" ~ "excluded",
+  ))
+
+previous |> count(cat_prev)
 ```
 
+Grants
+
+ASK ABOUT PERKINS AND MIDDLE SCHOOL EXPANSION
+
 ```{r}
-# grants <-
-#   read_excel(
-#     glue("{path_working}/Grants good.xlsx"),
-#     col_types = c(rep("text", 3), "logical")
-#   )
+awards <-
+  read_parquet(glue("{path_data}/working/ledger.parquet")) |>
+  distinct(award_id, project_id) |>
+  filter_out(award_id == "1000074" & project_id != "400308")
+
+grants <-
+  read_excel(
+    glue("{path_data}/manual/grants.xlsx"),
+    col_types = "text"
+  ) |>
+  select(!c(projects_include, projects_exclude)) |>
+  pivot_longer(
+    cols = starts_with("award_id"),
+    names_to = "award_type", names_prefix = "award_id_",
+    values_to = "award_id", values_drop_na = TRUE
+  ) |>
+  mutate(is_grant = TRUE) |>
+  select(!award_type) |>
+  arrange(award_id, grant_name)
+
+grants_lookup <-
+  awards |>
+  left_join(grants, by = join_by(award_id)) |>
+  filter(!is.na(grant_name)) |>
+  arrange(grant_name, award_id, project_id)
 ```
 
 Raw non-personnel data.
@@ -170,6 +212,7 @@ services_excluded <- c(
 ```{r}
 nonpersonnel_clean <-
   nonpersonnel |>
+  left_join(grants_lookup, by = join_by(award_id, project_id)) |>
   mutate(is_capital = case_when(
     appropriation_fund == "3030" ~ TRUE,
     .default = FALSE
@@ -182,18 +225,6 @@ nonpersonnel_clean <-
     transaction_id, regex("PO[:digit:]{6}", ignore_case = FALSE)
   )) |>
   mutate(is_po = !is.na(po_number), .before = po_number)
-```
-
-```{r}
-# r051a_aug <-
-#   r051a_clean |>
-# left_join(pos_cat_prev, by = join_by(po_number)) |>
-# mutate(is_grant = case_when(
-#   award == "1000074" & project == "400308" ~ TRUE,
-#   award != "1000074" & (award %in% grants$award_current) ~ TRUE,
-#   award != "1000074" & (award %in% grants$award_carryover) ~ TRUE,
-#   .default = FALSE
-# ))
 ```
 
 ```{r}
@@ -237,14 +268,15 @@ po_detail <-
   po_costcenters |>
   left_join(po_accounts, by = join_by(po_number)) |>
   left_join(po, by = join_by(po_number)) |>
+  left_join(previous, by = join_by(po_number)) |>
   mutate(categorization = NA_character_) |>
   mutate(likely_not_excluded = str_detect(items, regex(
-    "name (of )*(the )*resource|resource name",
+    "name (of )*(the )*resource|resource name|personnel|staffing|temps",
     ignore_case = TRUE
   ))) |>
   relocate(
     c(
-      categorization, likely_not_excluded,
+      categorization, cat_prev, likely_not_excluded,
       suppliers, items, title, costcenter_names, po_number, po_total
     ),
     .before = 0

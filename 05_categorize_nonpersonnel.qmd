@@ -199,7 +199,9 @@ nonpersonnel_categorized <-
     .default = net_accounted * indirect
   )) |>
   mutate(
-    amt_total = amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct + amt_indirect
+    amt_total = (
+      amt_nonbudgetary + amt_unallowable + amt_excluded + amt_direct + amt_indirect
+    )
   ) |>
   filter(!is.na(amt_total))
 ```
@@ -219,6 +221,22 @@ nonpersonnel |>
 nonpersonnel_categorized |>
   pull(amt_total) |>
   sum()
+```
+
+```{r}
+nonpersonnel_categorized |>
+  filter(is_grant) |>
+  group_by(grant_name, cfda) |>
+  summarize(amt_total = sum(amt_total))
+
+nonpersonnel_categorized |>
+  filter(is_grant) |>
+  group_by(account_name) |>
+  summarize(amt_total = sum(amt_total))
+
+nonpersonnel_categorized |>
+  filter(is_grant) |>
+  summarize(amt_total = sum(amt_total))
 ```
 
 ```{r}
