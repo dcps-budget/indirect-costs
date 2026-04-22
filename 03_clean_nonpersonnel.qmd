@@ -49,8 +49,6 @@ previous |> count(cat_prev)
 
 Grants
 
-ASK ABOUT PERKINS AND MIDDLE SCHOOL EXPANSION
-
 ```{r}
 awards <-
   read_parquet(glue("{path_data}/working/ledger.parquet")) |>
@@ -276,8 +274,9 @@ po_detail <-
   ))) |>
   relocate(
     c(
-      categorization, cat_prev, likely_not_excluded,
-      suppliers, items, title, costcenter_names, po_number, po_total
+      categorization, cat_prev,
+      suppliers, title, items, costcenter_names, likely_not_excluded,
+      po_number, po_total
     ),
     .before = 0
   ) |>
